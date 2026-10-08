@@ -1,0 +1,8 @@
+{
+  "max_workers": 24,
+  "check_timeout": 3.0,
+  "default_protocol": "SELECTED",
+  "monitor_refresh_ms": 500,
+  "online_interval": 60,
+  "offline_interval": 30
+}

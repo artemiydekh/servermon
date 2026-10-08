@@ -1,0 +1,18 @@
+# Environments & Dependencies
+.venv/
+env/
+venv/
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+
+# Logs & Local runtime artifacts
+storage/*.log
+config/log_metrics.json
+
+# IDE / Editor
+.vscode/
+.agents/
+*.code-workspace
+
