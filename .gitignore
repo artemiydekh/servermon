@@ -11,6 +11,12 @@ __pycache__/
 storage/*.log
 config/log_metrics.json
 
+# PyInstaller / Build artifacts
+dist/
+dist-installer/
+build/
+*.spec
+
 # IDE / Editor
 .vscode/
 .agents/
