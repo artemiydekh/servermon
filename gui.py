@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import json
+from pathlib import Path
 from collections import deque
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -9,7 +10,46 @@ from urllib.parse import urlsplit
 import ctypes
 from ctypes import wintypes
 
+BASE_DIR = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
+
 STATUS_COLORS = {"ONLINE": "#34d399", "OFFLINE": "#f87171"}
+
+
+class FILETIME(ctypes.Structure):
+    """Windows API FILETIME structure for process timestamp calculation."""
+    _fields_ = [("dwLow", wintypes.DWORD), ("dwHigh", wintypes.DWORD)]
+
+
+class PROCESS_MEMORY_COUNTERS_EX(ctypes.Structure):
+    """Windows API structure for process memory counters."""
+    _fields_ = [
+        ("cb", wintypes.DWORD),
+        ("PageFaultCount", wintypes.DWORD),
+        ("PeakWorkingSetSize", ctypes.c_size_t),
+        ("WorkingSetSize", ctypes.c_size_t),
+        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+        ("PagefileUsage", ctypes.c_size_t),
+        ("PeakPagefileUsage", ctypes.c_size_t),
+        ("PrivateUsage", ctypes.c_size_t),
+    ]
+
+
+class MEMORYSTATUSEX(ctypes.Structure):
+    """Windows API structure for system memory load metrics."""
+    _fields_ = [
+        ("dwLength", ctypes.c_ulong),
+        ("dwMemoryLoad", ctypes.c_ulong),
+        ("ullTotalPhys", ctypes.c_ulonglong),
+        ("ullAvailPhys", ctypes.c_ulonglong),
+        ("ullTotalPageFile", ctypes.c_ulonglong),
+        ("ullAvailPageFile", ctypes.c_ulonglong),
+        ("ullTotalVirtual", ctypes.c_ulonglong),
+        ("ullAvailVirtual", ctypes.c_ulonglong),
+        ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+    ]
 
 # =============================================================================
 # PYSIDE6 / QT WIDGETS AND CORE ENGINE CLASSES
@@ -35,15 +75,7 @@ from scheduler import ServerScheduler
 # =============================================================================
 
 class BatchCheckWorker(QThread):
-    """
-    Background worker thread running batch network verifications concurrently.
-    
-    Why this is isolated in a QThread:
-    Network checks (TCP socket connection handshakes and OS ping executions) are 
-    synchronous blocking calls. If run on Qt's main thread, the entire GUI locks 
-    up and freezes. Running this inside a dedicated QThread keeps the window 
-    responsive at 60 FPS while checks execute in the background.
-    """
+    """Background worker thread running batch network verifications concurrently."""
 
     # Signal emitted the instant an individual target check finishes
     target_checked = Signal(dict)
@@ -149,46 +181,13 @@ class BatchCheckWorker(QThread):
 # =============================================================================
 
 class SingleTargetWorker(QThread):
-    """
-    Background thread that runs a single-target network check without freezing the GUI.
+    """Background worker thread that runs an individual target network verification."""
 
-    --- WHY THIS CLASS IS NEEDED ---
-    The three inspector buttons (Ping Test, TCP Test, Inspect and Test) previously
-    called monitor.ping_check() and monitor.TCP_check() directly on the main Qt thread.
-    
-    Network calls are BLOCKING -- they hold the thread captive for up to `timeout` seconds
-    while waiting for a socket connection or ping response. When that happens on the main
-    thread, Qt cannot process any events (mouse clicks, repaints, etc.) and the entire
-    window appears frozen or unresponsive until the call returns.
-
-    This class runs the check on a dedicated background thread and emits a signal back to
-    the main thread once the result is ready, keeping the GUI fully responsive at all times.
-
-    Signals:
-        check_finished (dict): Emitted when the check completes. The payload dict contains:
-            - "mode":   The protocol used ("PING", "TCP", or "BOTH")
-            - "ping_res": The result dict from monitor.ping_check() (may be None)
-            - "tcp_res":  The result dict from monitor.TCP_check() (may be None)
-    """
-
-    # Qt Signal: carries the result payload back to the main thread.
-    # Signals are the ONLY thread-safe way to send data back to a Qt UI thread.
     check_finished = Signal(dict)
 
     def __init__(self, target: dict, mode: str, timeout: float = 3.0):
-        """
-        Sets up the worker with everything it needs to run independently.
-
-        Parameters:
-            target  - The target dict (name, host, port, check_type, etc.)
-            mode    - "PING" to run only ping, "TCP" to run only TCP,
-                      "BOTH" to run ping and TCP in sequence.
-            timeout - Socket/ping timeout in seconds (from user settings).
-        """
+        """Initializes target parameters and network mode for background check."""
         super().__init__()
-
-        # Store a snapshot of the fields we need so we don't touch shared
-        # state from a background thread (which would be a race condition).
         self.equipment = target.get("name", "Unknown")
         self.host      = target.get("host", "")
         self.port      = int(target.get("port", 80) or 80)
@@ -232,7 +231,7 @@ class NetworkMonitorUI:
     """
 
     def __init__(self, ui_file_path: str = "gui.ui"):
-        # Load the Qt Designer XML file directly into memory
+        """Loads user interface from UI file and initializes application state."""
         loader = QUiLoader()
         ui_file = QFile(ui_file_path)
         if not ui_file.open(QFile.ReadOnly):
@@ -302,22 +301,7 @@ class NetworkMonitorUI:
         self.setup_settings_page()
         self.refresh_logs()
 
-        # =====================================================================
-        # SOLID LAYOUT LOCK: SERVER INSPECTOR SPLIT PANELS
-        # =====================================================================
-        # In the Server Inspector tab, detBottomRow is a horizontal box (QHBoxLayout)
-        # containing two large containers side-by-side:
-        #   Index 0: panelNetworkSpecs (Comparative Protocol Diagnostics)
-        #   Index 1: panelHardwareSlots (Hardware Telemetry Slots)
-        #
-        # By default, Qt allows layouts to dynamically stretch or compress panels
-        # based on the content of their child widgets. If text in one panel becomes
-        # longer, it could expand that panel horizontally and steal width from the
-        # neighboring panel.
-        #
-        # Calling setStretch(0, 1) and setStretch(1, 1) enforces a strict 50% / 50%
-        # solid split between both columns. Neither container can ever squeeze or
-        # reduce the other, ensuring a stable, professional layout at all times.
+        # Server Inspector split layout
         self.window.detBottomRow.setStretch(0, 1)
         self.window.detBottomRow.setStretch(1, 1)
 
@@ -325,8 +309,8 @@ class NetworkMonitorUI:
         # APP RESOURCE & STORAGE MONITORING STATE (PERSISTED)
         # =====================================================================
         # File where cumulative metrics survive app restarts
-        self.metrics_filepath = "config/log_metrics.json"
-        self.log_filepath = "storage/monitor.log"
+        self.metrics_filepath = str(BASE_DIR / "config" / "log_metrics.json")
+        self.log_filepath = str(BASE_DIR / "storage" / "monitor.log")
         self.scheduled_history = deque()  # (timestamp, bytes_added) over the last 5 minutes (300s)
         self.last_known_log_size = os.path.getsize(self.log_filepath) if os.path.exists(self.log_filepath) else 0
 
@@ -354,11 +338,13 @@ class NetworkMonitorUI:
 
 
     def _on_scheduled_check(self, target: dict):
+        """Handles periodic timer triggers for individual scheduled server checks."""
         if not target:
             return
         mode = target.get("check_type", "TCP").upper()
         worker = SingleTargetWorker(target=target, mode=mode, timeout=self.check_timeout)
         def on_done(payload, t=target, w=worker):
+            """Processes finished scheduled check and releases worker reference."""
             self._handle_single_check_finished(payload, t, source="SCHEDULED")
             if w in self.scheduled_workers:
                 self.scheduled_workers.remove(w)
@@ -815,10 +801,6 @@ class NetworkMonitorUI:
                     self.populate_server_detail_page(target["id"])
 
         else:
-            # =================================================================
-            # BRANCH B: CREATING A BRAND NEW TARGET
-            # =================================================================
-            # Use storageH.create_target_entry to build a 100% complete dictionary
             new_entry = storageH.create_target_entry(
                 name=raw_name,
                 host=clean_host,
@@ -1193,17 +1175,7 @@ class NetworkMonitorUI:
         ping_total = ping_ok + ping_fail
         self.window.lblValDetPingChecks.setText(f"{ping_ok} / {ping_total}")
 
-        # =====================================================================
-        # COMPARATIVE PROTOCOL DIAGNOSTICS (SPLIT TCP TOP / PING BOTTOM)
-        # =====================================================================
-        # The left inspector card is split into two distinct sub-cards:
-        #   1. Top Card:    TCP Connection & Port Status
-        #   2. Bottom Card: ICMP Ping & Link Telemetry
-        #
-        # This separation guarantees that users never confuse a successful ping
-        # with an open TCP port (e.g. host responds to ping, but port 80 is closed).
-
-        # --- SECTION 1 (TOP): TCP Connection & Port Status ---
+        # Protocol Diagnostics (TCP / ICMP)
         self.window.lblDetSpecPort.setText(str(target.get("port") or "N/A"))
         self.window.lblDetSpecType.setText(target.get("check_type", "N/A"))
 
@@ -1349,14 +1321,27 @@ class NetworkMonitorUI:
             target["last_checked"] = now
             if res.get("resolved_ip"):
                 target["resolved_ip"] = res["resolved_ip"]
-            if target.get("check_type", "").upper() == proto:
-                target["status"] = res["status"]
-                target["response_time_ms"] = res["response_time_ms"]
-                target["error"] = res.get("error")
             self._update_target_counters(
                 target, res["status"], res["response_time_ms"], check_mode=proto
             )
             self._log_and_append_result(target, proto, res)
+
+        # Update primary status and Last Latency based on whichever test was triggered
+        primary_res = None
+        if mode == "PING":
+            primary_res = ping_res
+        elif mode == "TCP":
+            primary_res = tcp_res
+        else:  # "BOTH"
+            preferred = target.get("check_type", "TCP").upper()
+            primary_res = tcp_res if preferred == "TCP" and tcp_res else ping_res
+            if not primary_res:
+                primary_res = tcp_res or ping_res
+
+        if primary_res:
+            target["status"] = primary_res["status"]
+            target["response_time_ms"] = primary_res["response_time_ms"]
+            target["error"] = primary_res.get("error")
 
         # --- Recompute delta and refresh all views ---
         self._recompute_delta_and_update(target)
@@ -1833,9 +1818,6 @@ class NetworkMonitorUI:
         """Initializes process CPU time counter using Windows kernel32."""
         try:
             kernel32 = ctypes.WinDLL("kernel32")
-            class FILETIME(ctypes.Structure):
-                _fields_ = [("dwLow", wintypes.DWORD), ("dwHigh", wintypes.DWORD)]
-
             c, e, k, u = FILETIME(), FILETIME(), FILETIME(), FILETIME()
             kernel32.GetProcessTimes(kernel32.GetCurrentProcess(), ctypes.byref(c), ctypes.byref(e), ctypes.byref(k), ctypes.byref(u))
             self._prev_kernel_time = (k.dwHigh << 32) | k.dwLow
@@ -1848,9 +1830,6 @@ class NetworkMonitorUI:
         """Calculates instantaneous CPU usage of this servermon process."""
         try:
             kernel32 = ctypes.WinDLL("kernel32")
-            class FILETIME(ctypes.Structure):
-                _fields_ = [("dwLow", wintypes.DWORD), ("dwHigh", wintypes.DWORD)]
-
             c, e, k, u = FILETIME(), FILETIME(), FILETIME(), FILETIME()
             kernel32.GetProcessTimes(kernel32.GetCurrentProcess(), ctypes.byref(c), ctypes.byref(e), ctypes.byref(k), ctypes.byref(u))
             now_kernel = (k.dwHigh << 32) | k.dwLow
@@ -1872,31 +1851,12 @@ class NetworkMonitorUI:
         return 0.0
 
     def _get_app_and_system_ram(self) -> tuple:
-        """
-        Retrieves app WorkingSet (RAM) in MB and system-wide RAM load percentage
-        via Windows native psapi and kernel32 APIs without requiring external packages.
-        """
+        """Retrieves app RAM in MB and system-wide RAM load percentage."""
         app_ram_mb = 0.0
         sys_ram_pct = 0
         try:
-            # 1. App Process Working Set Memory
             psapi = ctypes.WinDLL("psapi")
             kernel32 = ctypes.WinDLL("kernel32")
-
-            class PROCESS_MEMORY_COUNTERS_EX(ctypes.Structure):
-                _fields_ = [
-                    ("cb", wintypes.DWORD),
-                    ("PageFaultCount", wintypes.DWORD),
-                    ("PeakWorkingSetSize", ctypes.c_size_t),
-                    ("WorkingSetSize", ctypes.c_size_t),
-                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-                    ("PagefileUsage", ctypes.c_size_t),
-                    ("PeakPagefileUsage", ctypes.c_size_t),
-                    ("PrivateUsage", ctypes.c_size_t),
-                ]
 
             psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD]
             psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
@@ -1905,20 +1865,6 @@ class NetworkMonitorUI:
             pmc.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS_EX)
             if psapi.GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb):
                 app_ram_mb = round(pmc.WorkingSetSize / (1024 * 1024), 2)
-
-            # 2. Total System-Wide Memory Load
-            class MEMORYSTATUSEX(ctypes.Structure):
-                _fields_ = [
-                    ("dwLength", ctypes.c_ulong),
-                    ("dwMemoryLoad", ctypes.c_ulong),
-                    ("ullTotalPhys", ctypes.c_ulonglong),
-                    ("ullAvailPhys", ctypes.c_ulonglong),
-                    ("ullTotalPageFile", ctypes.c_ulonglong),
-                    ("ullAvailPageFile", ctypes.c_ulonglong),
-                    ("ullTotalVirtual", ctypes.c_ulonglong),
-                    ("ullAvailVirtual", ctypes.c_ulonglong),
-                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
-                ]
 
             mem = MEMORYSTATUSEX()
             mem.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
@@ -2012,7 +1958,8 @@ class NetworkMonitorUI:
 
         # 2. Audit current monitor.log file size
         curr_log_size = os.path.getsize(self.log_filepath) if os.path.exists(self.log_filepath) else 0
-        self.last_known_log_size = curr_log_size
+        if curr_log_size < self.last_known_log_size:
+            self.last_known_log_size = curr_log_size
         self.window.lblValLogSize.setText(self._format_size(curr_log_size))
 
         # 3. Compute 5-minute rolling rate for scheduled checks only
@@ -2071,6 +2018,7 @@ class NetworkMonitorUI:
         self.window.lblClientExplanation.setText(explanation)
 
     def show(self):
+        """Sizes and presents the application window maximized on the screen."""
         screen = (self.window.screen() or QApplication.primaryScreen()).availableGeometry()
         self.window.setMinimumSize(screen.width() // 2, screen.height() // 2)
         self.window.showMaximized()

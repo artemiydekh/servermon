@@ -1,6 +1,6 @@
 ; Inno Setup Script for ServerMon
 #define MyAppName "ServerMon"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "0.8"
 #define MyAppPublisher "ARTHAZARD"
 #define MyAppExeName "ServerMon.exe"
 
@@ -24,6 +24,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "dist\ServerMon\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "gui.ui"; DestDir: "{app}"; Flags: ignoreversion
+Source: "config\*"; DestDir: "{app}\config"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
