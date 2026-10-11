@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import json
+import logging
 from pathlib import Path
 from collections import deque
 from datetime import datetime
@@ -12,7 +13,7 @@ from ctypes import wintypes
 
 BASE_DIR = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
 
-STATUS_COLORS = {"ONLINE": "#34d399", "OFFLINE": "#f87171"}
+STATUS_COLORS = {"ONLINE": "#34d399", "OFFLINE": "#f87171", "VERIFYING": "#fbbf24"}
 
 
 class FILETIME(ctypes.Structure):
@@ -58,7 +59,8 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QPushButton, QCompleter,
     QTableWidgetItem, QMessageBox, QHeaderView,
     QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
-    QSpinBox, QFrame, QLineEdit
+    QSpinBox, QFrame, QLineEdit, QCheckBox, QTextEdit,
+    QScrollArea, QGridLayout
 )
 from PySide6.QtCore import QFile, QThread, Signal, QStringListModel, Qt, QTimer
 from PySide6.QtGui import QTextCursor, QColor
@@ -67,6 +69,8 @@ from PySide6.QtUiTools import QUiLoader
 # Project internal modules
 import storageH
 import monitor
+import notifier
+from notifier import AlertNotifier, parse_recipients
 from settings_manager import SettingsManager
 from scheduler import ServerScheduler
 
@@ -255,22 +259,8 @@ class NetworkMonitorUI:
         self.single_worker = None   # Holds the active SingleTargetWorker thread (or None)
         
         # =====================================================================
-        # INDEPENDENT SERVER SCHEDULER
-        # =====================================================================
-        # Each server gets its own QTimer with independent cadences (60s when ONLINE,
-        # 30s when OFFLINE). When any server's timer fires, it emits `check_requested`,
-        # which triggers `_on_scheduled_check` on the main GUI thread.
-        self.scheduler = ServerScheduler()
-        self.scheduler.check_requested.connect(self._on_scheduled_check)
-        self.scheduled_workers = []  # Retains active worker thread references to prevent GC
-        
-        # =====================================================================
         # MODULAR CONFIGURATION & SETTINGS ENGINE
         # =====================================================================
-        # Instead of hardcoding defaults in memory, we instantiate our generic
-        # SettingsManager. On boot, it automatically loads config/settings.json
-        # from disk (or creates it with defaults if running for the first time).
-        # Any preferences the user saved previously are immediately restored!
         self.settings = SettingsManager(filepath="config/settings.json")
 
         # Read saved user preferences (with fallback to safe defaults)
@@ -279,9 +269,24 @@ class NetworkMonitorUI:
         self.online_interval = int(self.settings.get("online_interval", 60))
         self.offline_interval = int(self.settings.get("offline_interval", 30))
         self.monitor_refresh_ms = int(self.settings.get("monitor_refresh_ms", 2000))
+        self.insurance_retries = int(self.settings.get("insurance_retries", 2))
+        self.insurance_delay_ms = int(self.settings.get("insurance_delay_ms", 1000))
 
-        # Pass configured intervals to ServerScheduler
+        # =====================================================================
+        # INDEPENDENT SERVER SCHEDULER & ALERT NOTIFIER
+        # =====================================================================
+        self.scheduler = ServerScheduler()
         self.scheduler.set_intervals(self.online_interval, self.offline_interval)
+        self.scheduler.set_insurance_config(self.insurance_retries, self.insurance_delay_ms)
+        self.scheduler.check_requested.connect(self._on_scheduled_check)
+        self.scheduler.server_down.connect(self._on_server_down_alert)
+        self.scheduler.server_recovered.connect(self._on_server_recovered_alert)
+        self.scheduler.insurance_attempt.connect(self._on_insurance_attempt)
+        self.scheduled_workers = []  # Retains active worker thread references to prevent GC
+
+        # Notification & Alert Coordinator (Desktop Tray + Async Email)
+        self.notifier = AlertNotifier(self.window)
+        self.notifier.email_dispatched.connect(self._on_email_dispatched)
 
         # Optimization: Debounced disk save timer
         # Prevents writing targets.json 100 times in rapid succession
@@ -337,15 +342,15 @@ class NetworkMonitorUI:
             self.update_dashboard_quick_target_card(first_id)
 
 
-    def _on_scheduled_check(self, target: dict):
-        """Handles periodic timer triggers for individual scheduled server checks."""
+    def _on_scheduled_check(self, target: dict, check_reason: str = "SCHEDULED"):
+        """Handles periodic and insurance retry triggers for scheduled server checks."""
         if not target:
             return
         mode = target.get("check_type", "TCP").upper()
         worker = SingleTargetWorker(target=target, mode=mode, timeout=self.check_timeout)
-        def on_done(payload, t=target, w=worker):
+        def on_done(payload, t=target, w=worker, r=check_reason):
             """Processes finished scheduled check and releases worker reference."""
-            self._handle_single_check_finished(payload, t, source="SCHEDULED")
+            self._handle_single_check_finished(payload, t, source=r)
             if w in self.scheduled_workers:
                 self.scheduled_workers.remove(w)
         worker.check_finished.connect(on_done)
@@ -1339,7 +1344,20 @@ class NetworkMonitorUI:
                 primary_res = tcp_res or ping_res
 
         if primary_res:
-            target["status"] = primary_res["status"]
+            res_status = primary_res["status"]
+            if source in ("SCHEDULED", "INSURANCE") and target.get("id"):
+                outcome = self.scheduler.handle_check_result(target, primary_res)
+                if outcome == "INSURANCE_CHECKING":
+                    target["status"] = "VERIFYING"
+                elif outcome == "CONFIRMED_DOWN":
+                    target["status"] = "OFFLINE"
+                else:
+                    target["status"] = res_status
+            else:
+                target["status"] = res_status
+                if target.get("id") and res_status == "ONLINE":
+                    self.scheduler.handle_check_result(target, primary_res)
+
             target["response_time_ms"] = primary_res["response_time_ms"]
             target["error"] = primary_res.get("error")
 
@@ -1348,12 +1366,6 @@ class NetworkMonitorUI:
 
         # Record storage attribution to monitor.log (SCHEDULED vs MANUAL)
         self.record_log_growth(source=source)
-
-        # Notify scheduler so it dynamically adjusts interval:
-        # - ONLINE  -> 60 seconds (normal)
-        # - OFFLINE -> 30 seconds (tightened)
-        if target.get("id"):
-            self.scheduler.update_status(target.get("id"), target.get("status"))
 
     def _update_target_counters(self, target: dict, status: str, latency: float, check_mode: str = "TCP"):
         """Helper to increment general and protocol-specific counters."""
@@ -1462,13 +1474,15 @@ class NetworkMonitorUI:
 
     def setup_settings_page(self):
         """
-        Constructs the configuration card within Page 4 (Application Settings).
-        Includes thread worker count selection, dynamic resource advice banners,
-        and socket verification timeout controls.
+        Constructs the configuration cards within Page 4 (Application Settings).
+        Includes thread worker count selection, socket verification timeout controls,
+        scheduler intervals, insurance checks configuration, and full SMTP email alert setup.
         """
         layout = self.window.p4_layout
 
-        # Settings Panel Frame
+        # =====================================================================
+        # CARD 1: Performance, Concurrency & Cadence Settings
+        # =====================================================================
         frame_settings = QFrame()
         frame_settings.setStyleSheet(
             "background-color: #131d33; border: 1px solid #1e293b; border-radius: 12px; padding: 20px;"
@@ -1476,20 +1490,10 @@ class NetworkMonitorUI:
         frame_layout = QVBoxLayout(frame_settings)
         frame_layout.setSpacing(16)
 
-        # Setting 1: Thread Worker Concurrency Selector
-        lbl_workers_title = QLabel("Concurrent Verification Workers:")
-        lbl_workers_title.setStyleSheet("font-size: 14px; font-weight: 700; color: #ffffff;")
-        frame_layout.addWidget(lbl_workers_title)
-
-        self.cmb_workers = QComboBox()
-
-        # --- Worker Tier Options ---
-        # Each addItem call adds one option to the dropdown.
-        # The first argument is the human-readable label shown to the user.
-        # The second argument (the integer) is the actual data value -- the number
-        # of concurrent worker threads that will be passed to ThreadPoolExecutor.
-        # Qt lets us attach this hidden value to each item so we can retrieve it
-        # later with currentData() instead of parsing the label text.
+        # Title
+        lbl_perf_header = QLabel("Performance & Verification Cadence")
+        lbl_perf_header.setStyleSheet("font-size: 16px; font-weight: 700; color: #ffffff;")
+        frame_layout.addWidget(lbl_perf_header)
 
         # Setting 1: Thread Worker Concurrency (Text Box + Confirmation)
         lbl_workers_title = QLabel("Concurrent Verification Workers:")
@@ -1519,7 +1523,7 @@ class NetworkMonitorUI:
 
         # Setting 2: Network Timeout
         lbl_timeout_title = QLabel("Network Connection Timeout (Seconds):")
-        lbl_timeout_title.setStyleSheet("font-size: 14px; font-weight: 700; color: #ffffff; margin-top: 10px;")
+        lbl_timeout_title.setStyleSheet("font-size: 14px; font-weight: 700; color: #ffffff; margin-top: 6px;")
         frame_layout.addWidget(lbl_timeout_title)
 
         self.spn_timeout = QSpinBox()
@@ -1533,11 +1537,10 @@ class NetworkMonitorUI:
 
         # Setting 3: Scheduler Timers (Online vs Offline Intervals)
         lbl_intervals_title = QLabel("Server Scheduling Cadence (Seconds):")
-        lbl_intervals_title.setStyleSheet("font-size: 14px; font-weight: 700; color: #ffffff; margin-top: 10px;")
+        lbl_intervals_title.setStyleSheet("font-size: 14px; font-weight: 700; color: #ffffff; margin-top: 6px;")
         frame_layout.addWidget(lbl_intervals_title)
 
         intervals_row = QHBoxLayout()
-        # Normal (Online) interval
         col_online = QVBoxLayout()
         col_online.addWidget(QLabel("Online Server Interval (Sec):"))
         self.spn_online_interval = QSpinBox()
@@ -1548,7 +1551,6 @@ class NetworkMonitorUI:
         col_online.addWidget(self.spn_online_interval)
         intervals_row.addLayout(col_online)
 
-        # Offline (Tightened) interval
         col_offline = QVBoxLayout()
         col_offline.addWidget(QLabel("Offline / Down Server Interval (Sec):"))
         self.spn_offline_interval = QSpinBox()
@@ -1560,9 +1562,28 @@ class NetworkMonitorUI:
         intervals_row.addLayout(col_offline)
         frame_layout.addLayout(intervals_row)
 
-        # Setting 4: Resource Monitor Refresh Rate
+        # Setting 4: Subsequent Insurance Checks on Failure
+        lbl_insurance_title = QLabel("Subsequent Insurance Checks on Failure:")
+        lbl_insurance_title.setStyleSheet("font-size: 14px; font-weight: 700; color: #ffffff; margin-top: 6px;")
+        frame_layout.addWidget(lbl_insurance_title)
+
+        insurance_row = QHBoxLayout()
+        lbl_insurance_desc = QLabel("Immediate confirmation checks before declaring server down & firing alerts:")
+        lbl_insurance_desc.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        self.spn_insurance_retries = QSpinBox()
+        self.spn_insurance_retries.setRange(0, 5)
+        self.spn_insurance_retries.setValue(self.insurance_retries)
+        self.spn_insurance_retries.setToolTip("0 = Alert on first failure, 2 = Check 2 additional times before alerting (recommended)")
+        self.spn_insurance_retries.setStyleSheet("background-color: #1e293b; border: 1px solid #334155; padding: 6px 12px; font-weight: 600; border-radius: 6px;")
+        self.spn_insurance_retries.valueChanged.connect(self.handle_insurance_retries_change)
+        insurance_row.addWidget(lbl_insurance_desc)
+        insurance_row.addStretch()
+        insurance_row.addWidget(self.spn_insurance_retries)
+        frame_layout.addLayout(insurance_row)
+
+        # Setting 5: Resource Monitor Refresh Rate
         lbl_monitor_speed_title = QLabel("App Resource Monitor Speed / Refresh Rate:")
-        lbl_monitor_speed_title.setStyleSheet("font-size: 14px; font-weight: 700; color: #ffffff; margin-top: 10px;")
+        lbl_monitor_speed_title.setStyleSheet("font-size: 14px; font-weight: 700; color: #ffffff; margin-top: 6px;")
         frame_layout.addWidget(lbl_monitor_speed_title)
 
         self.cmb_monitor_speed = QComboBox()
@@ -1573,14 +1594,207 @@ class NetworkMonitorUI:
         self.cmb_monitor_speed.setStyleSheet(
             "background-color: #1e293b; border: 1px solid #334155; padding: 8px 12px; font-weight: 600; border-radius: 6px;"
         )
-        # Select currently configured speed
         idx = self.cmb_monitor_speed.findData(self.monitor_refresh_ms)
         self.cmb_monitor_speed.setCurrentIndex(max(0, idx))
         self.cmb_monitor_speed.currentIndexChanged.connect(self.handle_monitor_speed_change)
         frame_layout.addWidget(self.cmb_monitor_speed)
 
-        # Insert Settings card above the bottom spacer in p4_layout
-        layout.insertWidget(2, frame_settings)
+        # =====================================================================
+        # CARD 2: Email & Server Down Alert Notifications
+        # =====================================================================
+        frame_email = QFrame()
+        frame_email.setStyleSheet(
+            "background-color: #131d33; border: 1px solid #1e293b; border-radius: 12px; padding: 20px;"
+        )
+        email_layout = QVBoxLayout(frame_email)
+        email_layout.setSpacing(14)
+
+        # Header row with title and enable checkbox
+        email_header_row = QHBoxLayout()
+        lbl_email_title = QLabel("Email & Server Down Alerts")
+        lbl_email_title.setStyleSheet("font-size: 16px; font-weight: 700; color: #ffffff;")
+        email_header_row.addWidget(lbl_email_title)
+        email_header_row.addStretch()
+
+        self.chk_email_enabled = QCheckBox("Enable Email Alert Notifications")
+        self.chk_email_enabled.setChecked(bool(self.settings.get("email_alerts_enabled", False)))
+        self.chk_email_enabled.setStyleSheet("font-size: 13px; font-weight: 600; color: #38bdf8;")
+        email_header_row.addWidget(self.chk_email_enabled)
+        email_layout.addLayout(email_header_row)
+
+        lbl_email_desc = QLabel(
+            "Dispatches automated email notifications to one or multiple recipients when a server fails periodic checks and subsequent insurance retries."
+        )
+        lbl_email_desc.setWordWrap(True)
+        lbl_email_desc.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        email_layout.addWidget(lbl_email_desc)
+
+        # Grid of SMTP settings
+        smtp_grid = QGridLayout()
+        smtp_grid.setSpacing(10)
+
+        # Row 0: Host, Port, Security
+        lbl_host = QLabel("SMTP Host / Server:")
+        lbl_host.setStyleSheet("font-weight: 600; color: #cbd5e1;")
+        self.txt_smtp_host = QLineEdit(str(self.settings.get("smtp_host", "")))
+        self.txt_smtp_host.setPlaceholderText("e.g. smtp.gmail.com, mail.company.com")
+        self.txt_smtp_host.setStyleSheet("background-color: #1e293b; border: 1px solid #334155; padding: 7px 10px; font-weight: 500; border-radius: 6px;")
+
+        lbl_port = QLabel("Port:")
+        lbl_port.setStyleSheet("font-weight: 600; color: #cbd5e1;")
+        self.spn_smtp_port = QSpinBox()
+        self.spn_smtp_port.setRange(1, 65535)
+        self.spn_smtp_port.setValue(int(self.settings.get("smtp_port", 587) or 587))
+        self.spn_smtp_port.setStyleSheet("background-color: #1e293b; border: 1px solid #334155; padding: 6px 10px; font-weight: 500; border-radius: 6px;")
+
+        lbl_sec = QLabel("Security Mode:")
+        lbl_sec.setStyleSheet("font-weight: 600; color: #cbd5e1;")
+        self.cmb_smtp_security = QComboBox()
+        self.cmb_smtp_security.addItem("STARTTLS", "STARTTLS")
+        self.cmb_smtp_security.addItem("SSL/TLS", "SSL/TLS")
+        self.cmb_smtp_security.addItem("None", "None")
+        saved_sec = str(self.settings.get("smtp_security", "STARTTLS")).upper()
+        sec_idx = 0
+        if "SSL" in saved_sec:
+            sec_idx = 1
+        elif "NONE" in saved_sec:
+            sec_idx = 2
+        self.cmb_smtp_security.setCurrentIndex(sec_idx)
+        self.cmb_smtp_security.setStyleSheet("background-color: #1e293b; border: 1px solid #334155; padding: 6px 10px; font-weight: 500; border-radius: 6px;")
+
+        smtp_grid.addWidget(lbl_host, 0, 0)
+        smtp_grid.addWidget(self.txt_smtp_host, 1, 0)
+        smtp_grid.addWidget(lbl_port, 0, 1)
+        smtp_grid.addWidget(self.spn_smtp_port, 1, 1)
+        smtp_grid.addWidget(lbl_sec, 0, 2)
+        smtp_grid.addWidget(self.cmb_smtp_security, 1, 2)
+
+        # Row 1: Username, Password
+        lbl_user = QLabel("SMTP Username / Auth Email:")
+        lbl_user.setStyleSheet("font-weight: 600; color: #cbd5e1;")
+        self.txt_smtp_user = QLineEdit(str(self.settings.get("smtp_user", "")))
+        self.txt_smtp_user.setPlaceholderText("e.g. alert-system@domain.com")
+        self.txt_smtp_user.setStyleSheet("background-color: #1e293b; border: 1px solid #334155; padding: 7px 10px; font-weight: 500; border-radius: 6px;")
+
+        lbl_pass = QLabel("SMTP Password / App Token:")
+        lbl_pass.setStyleSheet("font-weight: 600; color: #cbd5e1;")
+        self.txt_smtp_password = QLineEdit(str(self.settings.get("smtp_password", "")))
+        self.txt_smtp_password.setEchoMode(QLineEdit.Password)
+        self.txt_smtp_password.setPlaceholderText("Password or App Password")
+        self.txt_smtp_password.setStyleSheet("background-color: #1e293b; border: 1px solid #334155; padding: 7px 10px; font-weight: 500; border-radius: 6px;")
+
+        smtp_grid.addWidget(lbl_user, 2, 0, 1, 2)
+        smtp_grid.addWidget(self.txt_smtp_user, 3, 0, 1, 2)
+        smtp_grid.addWidget(lbl_pass, 2, 2)
+        smtp_grid.addWidget(self.txt_smtp_password, 3, 2)
+
+        # Row 2: Sender (Optional)
+        lbl_sender = QLabel("Sender Address (Optional):")
+        lbl_sender.setStyleSheet("font-weight: 600; color: #cbd5e1;")
+        self.txt_smtp_sender = QLineEdit(str(self.settings.get("smtp_sender", "")))
+        self.txt_smtp_sender.setPlaceholderText("Optional: ServerMon Alert <alerts@domain.com> (defaults to Username)")
+        self.txt_smtp_sender.setStyleSheet("background-color: #1e293b; border: 1px solid #334155; padding: 7px 10px; font-weight: 500; border-radius: 6px;")
+        smtp_grid.addWidget(lbl_sender, 4, 0, 1, 3)
+        smtp_grid.addWidget(self.txt_smtp_sender, 5, 0, 1, 3)
+
+        email_layout.addLayout(smtp_grid)
+
+        # Recipients Multi-address input
+        lbl_recipients = QLabel("Alert Recipient Email Addresses:")
+        lbl_recipients.setStyleSheet("font-weight: 600; color: #cbd5e1; margin-top: 4px;")
+        email_layout.addWidget(lbl_recipients)
+
+        lbl_recipients_sub = QLabel("Enter one or several recipient email addresses (separated by commas, semicolons, or newlines):")
+        lbl_recipients_sub.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        email_layout.addWidget(lbl_recipients_sub)
+
+        self.txt_email_recipients = QTextEdit()
+        self.txt_email_recipients.setPlainText(str(self.settings.get("email_recipients", "")))
+        self.txt_email_recipients.setPlaceholderText("admin@company.com, oncall@company.com\noperations@team.net")
+        self.txt_email_recipients.setMaximumHeight(65)
+        self.txt_email_recipients.setStyleSheet(
+            "background-color: #1e293b; border: 1px solid #334155; padding: 6px 10px; font-weight: 500; border-radius: 6px; color: #f8fafc;"
+        )
+        email_layout.addWidget(self.txt_email_recipients)
+
+        # Action Buttons row
+        actions_row = QHBoxLayout()
+        self.btn_save_email = QPushButton("Save Email Settings")
+        self.btn_save_email.setStyleSheet(
+            "background-color: #2563eb; color: #ffffff; padding: 8px 18px; font-weight: 700; border-radius: 6px;"
+        )
+        self.btn_save_email.clicked.connect(self.handle_save_email_settings)
+
+        self.btn_test_email = QPushButton("Send Test Email")
+        self.btn_test_email.setStyleSheet(
+            "background-color: #059669; color: #ffffff; padding: 8px 18px; font-weight: 700; border-radius: 6px;"
+        )
+        self.btn_test_email.clicked.connect(self.handle_send_test_email)
+
+        self.lbl_email_feedback = QLabel()
+        self.lbl_email_feedback.setStyleSheet("color: #94a3b8; font-size: 12px; font-weight: 600;")
+
+        actions_row.addWidget(self.btn_save_email)
+        actions_row.addWidget(self.btn_test_email)
+        actions_row.addWidget(self.lbl_email_feedback)
+        actions_row.addStretch()
+        email_layout.addLayout(actions_row)
+
+        # =====================================================================
+        # SCROLL AREA WRAPPER FOR CLEAN ADAPTIVE LAYOUT
+        # =====================================================================
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.NoFrame)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background: transparent;
+            }
+            QScrollBar:vertical {
+                background: #0f172a;
+                width: 8px;
+                margin: 0px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: #334155;
+                min-height: 24px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #475569;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: none;
+            }
+        """)
+
+        scroll_container = QWidget()
+        scroll_container.setStyleSheet("background: transparent;")
+        scroll_layout = QVBoxLayout(scroll_container)
+        scroll_layout.setSpacing(18)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.addWidget(frame_settings)
+        scroll_layout.addWidget(frame_email)
+        scroll_layout.addStretch(1)
+
+        scroll_area.setWidget(scroll_container)
+
+        # Remove the empty vertical spacer from gui.ui so scroll_area occupies the entire page height
+        for i in reversed(range(layout.count())):
+            item = layout.itemAt(i)
+            if item and item.spacerItem():
+                layout.removeItem(item)
+                break
+
+        layout.addWidget(scroll_area)
+        layout.setStretchFactor(scroll_area, 1)
 
     def _update_worker_advice_banner(self, workers: int):
         """Displays descriptive feedback banner based on the worker count."""
@@ -1636,6 +1850,174 @@ class NetworkMonitorUI:
             self.window, "Settings Updated",
             f"Successfully updated worker concurrency to {val} threads."
         )
+
+    def handle_insurance_retries_change(self, value: int):
+        """Updates subsequent insurance retry count and persists to config."""
+        self.insurance_retries = int(value)
+        self.settings.set("insurance_retries", self.insurance_retries)
+        self.scheduler.set_insurance_config(self.insurance_retries, self.insurance_delay_ms)
+
+    def handle_save_email_settings(self):
+        """Validates and persists SMTP email configuration and recipient list."""
+        enabled = self.chk_email_enabled.isChecked()
+        host = self.txt_smtp_host.text().strip()
+        port = self.spn_smtp_port.value()
+        security = self.cmb_smtp_security.currentData() or self.cmb_smtp_security.currentText()
+        user = self.txt_smtp_user.text().strip()
+        password = self.txt_smtp_password.text()
+        sender = self.txt_smtp_sender.text().strip()
+        recipients_raw = self.txt_email_recipients.toPlainText().strip()
+
+        self.settings.set("email_alerts_enabled", enabled)
+        self.settings.set("smtp_host", host)
+        self.settings.set("smtp_port", port)
+        self.settings.set("smtp_security", security)
+        self.settings.set("smtp_user", user)
+        self.settings.set("smtp_password", password)
+        self.settings.set("smtp_sender", sender)
+        self.settings.set("email_recipients", recipients_raw)
+
+        clean_recipients = parse_recipients(recipients_raw)
+        if enabled and not host:
+            self.lbl_email_feedback.setText("⚠ Settings saved, but SMTP Host is required!")
+            self.lbl_email_feedback.setStyleSheet("color: #f59e0b; font-size: 12px; font-weight: 600;")
+            QMessageBox.warning(
+                self.window, "Missing SMTP Host",
+                "Email alerts are enabled, but no SMTP Host was configured.\n"
+                "Please enter an SMTP server (e.g. smtp.gmail.com)."
+            )
+        elif enabled and not clean_recipients:
+            self.lbl_email_feedback.setText("⚠ Settings saved, but no valid recipients found!")
+            self.lbl_email_feedback.setStyleSheet("color: #f59e0b; font-size: 12px; font-weight: 600;")
+            QMessageBox.warning(
+                self.window, "No Recipients",
+                "Email alerts are enabled, but no valid recipient email addresses were found.\n"
+                "Please add at least one recipient address (e.g. admin@domain.com)."
+            )
+        else:
+            self.lbl_email_feedback.setText(f"✓ Saved! ({len(clean_recipients)} recipient address(es) configured)")
+            self.lbl_email_feedback.setStyleSheet("color: #34d399; font-size: 12px; font-weight: 600;")
+
+    def handle_send_test_email(self):
+        """Sends an asynchronous test email using current form values."""
+        host = self.txt_smtp_host.text().strip()
+        port = self.spn_smtp_port.value()
+        security = self.cmb_smtp_security.currentData() or self.cmb_smtp_security.currentText()
+        user = self.txt_smtp_user.text().strip()
+        password = self.txt_smtp_password.text()
+        sender = self.txt_smtp_sender.text().strip()
+        recipients_raw = self.txt_email_recipients.toPlainText().strip()
+
+        if not host:
+            QMessageBox.warning(
+                self.window, "Missing SMTP Host",
+                "Please enter an SMTP Host address before sending a test email."
+            )
+            return
+
+        recipients = parse_recipients(recipients_raw)
+        if not recipients:
+            QMessageBox.warning(
+                self.window, "Missing Recipients",
+                "Please enter at least one valid recipient email address in the recipients box."
+            )
+            return
+
+        smtp_config = {
+            "smtp_host": host,
+            "smtp_port": port,
+            "smtp_security": security,
+            "smtp_user": user,
+            "smtp_password": password,
+            "smtp_sender": sender,
+        }
+
+        subject, text_body, html_body = notifier.format_test_email(len(recipients))
+
+        self.btn_test_email.setEnabled(False)
+        self.lbl_email_feedback.setText(f"Dispatching test email to {len(recipients)} recipient(s)...")
+        self.lbl_email_feedback.setStyleSheet("color: #38bdf8; font-size: 12px; font-weight: 600;")
+
+        def _on_test_finished(success: bool, msg: str):
+            self.btn_test_email.setEnabled(True)
+            if success:
+                self.lbl_email_feedback.setText(f"✓ {msg}")
+                self.lbl_email_feedback.setStyleSheet("color: #34d399; font-size: 12px; font-weight: 600;")
+                QMessageBox.information(
+                    self.window, "Test Email Successful",
+                    f"Test email was delivered successfully!\n\n{msg}"
+                )
+            else:
+                self.lbl_email_feedback.setText(f"✗ Delivery failed: {msg}")
+                self.lbl_email_feedback.setStyleSheet("color: #f87171; font-size: 12px; font-weight: 600;")
+                QMessageBox.warning(
+                    self.window, "Test Email Failed",
+                    f"Failed to dispatch test email:\n\n{msg}"
+                )
+
+        self.notifier.send_async(
+            smtp_config=smtp_config,
+            recipients=recipients,
+            subject=subject,
+            text_body=text_body,
+            html_body=html_body,
+            callback=_on_test_finished
+        )
+
+    def _on_server_down_alert(self, target: dict, result: dict):
+        """Dispatches desktop and email alerts when a server is confirmed DOWN."""
+        name = target.get("name", "Unknown Server")
+        host = target.get("host", "Unknown Host")
+        retries = self.insurance_retries + 1
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_entry = f"{now_str} - CRITICAL - ALERT: Server '{name}' ({host}) is DOWN after {retries} consecutive failed checks!"
+        logging.critical(log_entry)
+        if hasattr(self.window, "txt_audit_logs"):
+            self.window.txt_audit_logs.append(log_entry)
+
+        self.notifier.notify_server_down(
+            target=target,
+            result=result,
+            smtp_config=self.settings.get_smtp_config(),
+            retries_done=retries
+        )
+
+    def _on_server_recovered_alert(self, target: dict, result: dict):
+        """Dispatches recovery notifications when a server returns ONLINE."""
+        name = target.get("name", "Unknown Server")
+        host = target.get("host", "Unknown Host")
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_entry = f"{now_str} - INFO - RECOVERED: Server '{name}' ({host}) is back ONLINE."
+        logging.info(log_entry)
+        if hasattr(self.window, "txt_audit_logs"):
+            self.window.txt_audit_logs.append(log_entry)
+
+        self.notifier.notify_server_recovered(
+            target=target,
+            result=result,
+            smtp_config=self.settings.get_smtp_config()
+        )
+
+    def _on_insurance_attempt(self, target: dict, attempt: int, total: int):
+        """Logs subsequent insurance verification attempt for a suspect server."""
+        name = target.get("name", "Unknown Server")
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_entry = f"{now_str} - WARNING - INSURANCE: {name} | Check failed. Running insurance check #{attempt}/{total}..."
+        logging.warning(log_entry)
+        if hasattr(self.window, "txt_audit_logs"):
+            self.window.txt_audit_logs.append(log_entry)
+
+    def _on_email_dispatched(self, success: bool, msg: str):
+        """Logs asynchronous email dispatch outcome to live audit logs."""
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        lvl = "INFO" if success else "WARNING"
+        log_entry = f"{now_str} - {lvl} - EMAIL DISPATCH: {msg}"
+        if success:
+            logging.info(log_entry)
+        else:
+            logging.warning(log_entry)
+        if hasattr(self.window, "txt_audit_logs"):
+            self.window.txt_audit_logs.append(log_entry)
 
     def handle_interval_change(self):
         """Updates online and offline scheduler intervals and saves to disk."""
@@ -1706,8 +2088,20 @@ class NetworkMonitorUI:
         mode = result.get("check_type", "TCP")
         target = self.target_lookup.get(target_id)
         if target:
+            # Process result through scheduler insurance verification
+            outcome = self.scheduler.handle_check_result(target, result)
+            if outcome == "INSURANCE_CHECKING":
+                target["status"] = "VERIFYING"
+            elif outcome == "CONFIRMED_DOWN":
+                target["status"] = "OFFLINE"
+            elif outcome in ("ONLINE", "RECOVERED"):
+                target["status"] = "ONLINE"
+            elif outcome == "STILL_OFFLINE":
+                target["status"] = "OFFLINE"
+            else:
+                target["status"] = result["status"]
+
             # 1. Update in-memory telemetry
-            target["status"] = result["status"]
             target["resolved_ip"] = result["resolved_ip"]
             target["response_time_ms"] = result["response_time_ms"]
             target["last_checked"] = check_time
@@ -1721,19 +2115,9 @@ class NetworkMonitorUI:
                 target["icmp_status"] = result["status"]
                 target["icmp_latency_ms"] = result["response_time_ms"]
 
-            # 2. Update math counters.
-            # We pass `mode` (the active header protocol -- "TCP" or "PING") as check_mode
-            # so the correct protocol-specific counter slot is incremented.
-            # Without this, every batch check would always hit the TCP counter branch
-            # regardless of whether PING was the selected mode.
+            # 2. Update math counters
             self._update_target_counters(target, result["status"], result["response_time_ms"], check_mode=mode)
             self._recompute_delta_and_update(target)
-
-            # Notify scheduler so it dynamically adjusts interval:
-            # - ONLINE  -> 60 seconds (normal)
-            # - OFFLINE -> 30 seconds (tightened)
-            if target.get("id"):
-                self.scheduler.update_status(target.get("id"), target.get("status"))
 
         # Decrement queue countdown
         if self.remaining_queue > 0:
@@ -2045,7 +2429,10 @@ class NetworkMonitorUI:
         if self.worker is not None and self.worker.isRunning():
             self.worker.wait(500)
 
-        # 5. Flush persistent storage metrics to disk
+        # 5. Conclude active email dispatch workers and hide tray icon
+        self.notifier.stop_all(500)
+
+        # 6. Flush persistent storage metrics to disk
         self._save_storage_metrics()
 
         event.accept()

@@ -2,7 +2,17 @@
   "max_workers": 24,
   "check_timeout": 3.0,
   "default_protocol": "SELECTED",
-  "monitor_refresh_ms": 500,
+  "monitor_refresh_ms": 2000,
   "online_interval": 60,
-  "offline_interval": 30
+  "offline_interval": 30,
+  "insurance_retries": 3,
+  "insurance_delay_ms": 1000,
+  "email_alerts_enabled": true,
+  "smtp_host": "",
+  "smtp_port": 465,
+  "smtp_user": "alerts@corp.com",
+  "smtp_password": "SuperSecretToken",
+  "smtp_security": "SSL/TLS",
+  "smtp_sender": "ServerMon <alerts@corp.com>",
+  "email_recipients": "admin@domain.com"
 }

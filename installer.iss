@@ -1,6 +1,6 @@
 ; Inno Setup Script for ServerMon
 #define MyAppName "ServerMon"
-#define MyAppVersion "0.8"
+#define MyAppVersion "1.0"
 #define MyAppPublisher "ARTHAZARD"
 #define MyAppExeName "ServerMon.exe"
 

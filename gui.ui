@@ -46,7 +46,7 @@
 
   <property name="windowTitle">
 
-   <string>Servermon v0.8 - Network Monitor Platform</string>
+   <string>Servermon v1.0 - Network Monitor Platform</string>
 
   </property>
 
@@ -794,7 +794,7 @@ QMessageBox QPushButton:pressed {
 
        <item><widget class="QLabel" name="lblBrandTitle"><property name="text"><string>Server Monitor</string></property></widget></item>
 
-       <item><widget class="QLabel" name="lblBrandSubtitle"><property name="text"><string>Servermon v0.8</string></property></widget></item>
+       <item><widget class="QLabel" name="lblBrandSubtitle"><property name="text"><string>Servermon v1.0</string></property></widget></item>
 
        <item><spacer name="spSidebarTop"><property name="orientation"><enum>Qt::Vertical</enum></property></spacer></item>
 

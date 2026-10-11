@@ -11,9 +11,22 @@ BASE_DIR = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Pat
 DEFAULT_SETTINGS_PATH = str(BASE_DIR / "config" / "settings.json")
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
-    "max_workers": 8,
+    "max_workers": 24,
     "check_timeout": 3.0,
-    "default_protocol": "TCP",
+    "default_protocol": "SELECTED",
+    "monitor_refresh_ms": 2000,
+    "online_interval": 60,
+    "offline_interval": 30,
+    "insurance_retries": 2,
+    "insurance_delay_ms": 1000,
+    "email_alerts_enabled": False,
+    "smtp_host": "",
+    "smtp_port": 587,
+    "smtp_user": "",
+    "smtp_password": "",
+    "smtp_security": "STARTTLS",
+    "smtp_sender": "",
+    "email_recipients": "",
 }
 
 
@@ -79,6 +92,23 @@ class SettingsManager:
         except OSError as error:
             print(f"[SettingsManager Error] Failed to write settings to {self.filepath}: {error}")
             return False
+
+    def get_smtp_config(self) -> Dict[str, Any]:
+        """Extracts SMTP and alert configuration as a clean dictionary."""
+        try:
+            port = int(self.get("smtp_port", 587) or 587)
+        except (ValueError, TypeError):
+            port = 587
+        return {
+            "smtp_host": str(self.get("smtp_host", "")).strip(),
+            "smtp_port": port,
+            "smtp_user": str(self.get("smtp_user", "")).strip(),
+            "smtp_password": str(self.get("smtp_password", "")),
+            "smtp_security": str(self.get("smtp_security", "STARTTLS")).strip().upper(),
+            "smtp_sender": str(self.get("smtp_sender", "")).strip(),
+            "email_recipients": str(self.get("email_recipients", "")).strip(),
+            "email_alerts_enabled": bool(self.get("email_alerts_enabled", False)),
+        }
 
 
 if __name__ == "__main__":
