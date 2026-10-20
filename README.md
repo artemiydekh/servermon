@@ -1,11 +1,18 @@
-# ServerMon
+## Table of contents
 
-Network and server monitoring desktop app built with PySide6.
+[Description](#servermon)
+[Setup](#setup)
 
-## Setup & Run
+## ServerMon
 
-```bash
-pip install -r requirements.txt
-python main.py
+Servermon is a simple Network and server monitoring tool built with PySide6.
+
+## Setup
+```
+step 1: Download ServerMon-Setup.exe from the latest release
+
+step 2: Run .exe file and follow along installer
+
+step 3: launch app (from desktop if you chose to make a shortcut to desktop)
 ```
 
