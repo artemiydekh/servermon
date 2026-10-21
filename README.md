@@ -7,6 +7,7 @@
 - [Dispatcher Architecture](#dispatcher-architecture)
 - [The GUI](#the-gui)
 - [TODO](#todo)
+- [License](#license)
 
 ## ServerMon
 
@@ -113,4 +114,9 @@ The graphical interface is the main way to interact and use the tool, once you s
 - [ ] **Log Size Growth Calculator**: Add the interactive calculator to the Resource Monitor tab to project log file size over custom hours or days.
 - [ ] **Desktop Notification Toggle**: Add a settings toggle switch to enable/disable desktop system tray popups.
 - [ ] **Activity Log Enhancements**: Add search/filter capabilities and configurable line display limits for the log viewer.
+
+## License
+
+This project is licensed under the [Apache License 2.0](LICENSE).
+
 
