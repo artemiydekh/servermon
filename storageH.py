@@ -28,13 +28,42 @@ def get_recent_logs(max_lines: int = 150) -> str:
         return f"[System Error] Could not read log file: {e}"
 
 
+LEGACY_KEYS = {
+    "tcp_status",
+    "icmp_status",
+    "tcp_latency_ms",
+    "icmp_latency_ms",
+    "latency_delta_ms",
+    "delta_analysis",
+    "tcp_successes",
+    "tcp_failures",
+    "ping_successes",
+    "ping_failures",
+}
+
+
 def load_targets() -> List[Dict[str, Any]]:
-    """Loads target configurations from targets.json."""
+    """Loads target configurations from targets.json with auto-hydration for multi-mode monitoring."""
     try:
         with open(TARGETS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            targets = json.load(f)
     except (json.JSONDecodeError, OSError):
         return []
+
+    if isinstance(targets, list):
+        for t in targets:
+            if isinstance(t, dict):
+                for k in LEGACY_KEYS:
+                    t.pop(k, None)
+                # Ensure multi-mode keys exist
+                if "enabled_checks" not in t:
+                    check_type = t.get("check_type", "TCP")
+                    t["enabled_checks"] = [check_type.upper()] if check_type else ["TCP"]
+                if "check_configs" not in t:
+                    t["check_configs"] = {}
+                if "history" not in t:
+                    t["history"] = {}
+    return targets
 
 
 def save_targets(targets: List[Dict[str, Any]]) -> bool:
@@ -51,13 +80,15 @@ def save_targets(targets: List[Dict[str, Any]]) -> bool:
 def create_target_entry(
     name: str,
     host: str,
-    check_type: str,
-    port: Optional[int] = None
+    check_type: str = "TCP",
+    port: Optional[int] = None,
+    enabled_checks: Optional[List[str]] = None,
+    check_configs: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Constructs a validated server target dictionary with default metrics."""
     cleaned_name = name.strip()
     cleaned_host = host.strip()
-    normalized_type = check_type.strip().upper()
+    normalized_type = check_type.strip().upper() if check_type else "TCP"
 
     resolved_port: Optional[int] = None
     if port is not None:
@@ -68,12 +99,22 @@ def create_target_entry(
     elif normalized_type == "TCP":
         resolved_port = 80
 
+    if enabled_checks is None:
+        resolved_enabled = [normalized_type]
+    else:
+        resolved_enabled = [c.strip().upper() for c in enabled_checks if c and c.strip()]
+        if not resolved_enabled:
+            resolved_enabled = [normalized_type]
+
     return {
         "id": f"target-{uuid.uuid4().hex[:8]}",
         "name": cleaned_name,
         "host": cleaned_host,
         "resolved_ip": None,
         "check_type": normalized_type,
+        "enabled_checks": resolved_enabled,
+        "check_configs": check_configs if isinstance(check_configs, dict) else {},
+        "history": {},
         "port": resolved_port,
         "status": "PENDING",
         "response_time_ms": None,
@@ -81,16 +122,31 @@ def create_target_entry(
         "avg_response_time_ms": None,
         "last_checked": None,
         "error": None,
-        "tcp_status": "STANDBY",
-        "tcp_latency_ms": None,
-        "icmp_status": "STANDBY",
-        "icmp_latency_ms": None,
-        "latency_delta_ms": None,
-        "delta_analysis": "Run verification to compute protocol delta",
         "successes": 0,
         "failures": 0,
-        "tcp_successes": 0,
-        "tcp_failures": 0,
-        "ping_successes": 0,
-        "ping_failures": 0,
     }
+
+
+def append_telemetry_sample(
+    target: Dict[str, Any],
+    check_type: str,
+    sample: Dict[str, Any],
+    max_samples: int = 60,
+) -> None:
+    """
+    Appends a telemetry sample to target's rolling history buffer for a given check_type.
+    Maintains a FIFO eviction window capped at max_samples.
+    """
+    if "history" not in target or not isinstance(target["history"], dict):
+        target["history"] = {}
+
+    norm_type = check_type.strip().upper()
+    buf = target["history"].setdefault(norm_type, [])
+    sample_copy = dict(sample)
+    if not sample_copy.get("timestamp"):
+        import datetime
+        sample_copy["timestamp"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    buf.append(sample_copy)
+
+    if len(buf) > max_samples:
+        del buf[:len(buf) - max_samples]

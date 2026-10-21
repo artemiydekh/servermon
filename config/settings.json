@@ -11,8 +11,8 @@
   "smtp_host": "",
   "smtp_port": 465,
   "smtp_user": "alerts@corp.com",
-  "smtp_password": "SuperSecretToken",
+  "smtp_password": "",
   "smtp_security": "SSL/TLS",
   "smtp_sender": "ServerMon <alerts@corp.com>",
-  "email_recipients": "admin@domain.com"
+  "email_recipients": ""
 }

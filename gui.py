@@ -13,7 +13,15 @@ from ctypes import wintypes
 
 BASE_DIR = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
 
-STATUS_COLORS = {"ONLINE": "#34d399", "OFFLINE": "#f87171", "VERIFYING": "#fbbf24"}
+STATUS_COLORS = {
+    "ONLINE": "#34d399",
+    "OFFLINE": "#f87171",
+    "DEGRADED": "#f59e0b",
+    "WARNING": "#fbbf24",
+    "VERIFYING": "#fbbf24",
+    "PENDING": "#64748b",
+    "STANDBY": "#94a3b8",
+}
 
 
 class FILETIME(ctypes.Structure):
@@ -73,6 +81,8 @@ import notifier
 from notifier import AlertNotifier, parse_recipients
 from settings_manager import SettingsManager
 from scheduler import ServerScheduler
+import gui_charts
+import monitor.registry as registry_module
 
 # =============================================================================
 # CLASS: BatchCheckWorker (Background Thread for Concurrent Testing)
@@ -106,27 +116,31 @@ class BatchCheckWorker(QThread):
     def _execute_single(self, target: dict) -> tuple:
         """
         Worker task invoked inside the thread pool for one individual target.
-        Extracts host parameters, calls monitor.py routines, and returns the ID and payload.
+        Runs modular checks via monitor.registry and returns the ID and payload.
         """
-        equipment = target.get("name", "Unknown")
-        host = target.get("host", "")
-        port = target.get("port", 80) or 80
-
-        # Execute check based on the active protocol chosen in the header (or per-target if SELECTED)
-        proto = target.get("check_type", "TCP").upper() if self.selected_mode == "SELECTED" else self.selected_mode
-        if proto == "TCP":
-            result = monitor.TCP_check(
-                equipment=equipment,
-                host=host,
-                port=int(port),
-                timeout=self.timeout
-            )
+        mode = self.selected_mode.strip().upper() if self.selected_mode else "SELECTED"
+        if mode == "SELECTED":
+            enabled = target.get("enabled_checks") or [target.get("check_type", "TCP")]
+        elif mode == "ALL":
+            enabled = list(registry_module.list_checks())
         else:
-            result = monitor.ping_check(
-                equipment=equipment,
-                host=host,
-                timeout=self.timeout
-            )
+            enabled = [mode]
+
+        multi_res = registry_module.run_checks_for_target(
+            target=target,
+            enabled_checks=enabled,
+            timeout=self.timeout
+        )
+        primary_proto = target.get("check_type", "TCP").upper()
+        checks = multi_res.get("checks", {})
+        primary_check = checks.get(mode) or checks.get(primary_proto) or (next(iter(checks.values())) if checks else {})
+        result = dict(primary_check)
+        result["overall_status"] = multi_res.get("overall_status", "ONLINE")
+        result["multi_checks"] = checks
+        if "response_time_ms" not in result or result.get("response_time_ms") is None:
+            result["response_time_ms"] = multi_res.get("primary_latency_ms")
+        if "check_type" not in result or not result.get("check_type"):
+            result["check_type"] = mode if mode not in ("SELECTED", "ALL") else primary_proto
 
         # Return target ID alongside raw test result
         return target.get("id"), result
@@ -185,43 +199,55 @@ class BatchCheckWorker(QThread):
 # =============================================================================
 
 class SingleTargetWorker(QThread):
-    """Background worker thread that runs an individual target network verification."""
+    """Background worker thread that runs modular network verification for a target."""
 
     check_finished = Signal(dict)
 
-    def __init__(self, target: dict, mode: str, timeout: float = 3.0):
-        """Initializes target parameters and network mode for background check."""
+    def __init__(
+        self,
+        target: dict,
+        enabled_checks: Optional[List[str]] = None,
+        mode: Optional[str] = None,
+        timeout: float = 3.0,
+    ):
         super().__init__()
-        self.equipment = target.get("name", "Unknown")
-        self.host      = target.get("host", "")
-        self.port      = int(target.get("port", 80) or 80)
-        self.mode      = mode        # "PING", "TCP", or "BOTH"
-        self.timeout   = timeout
+        self.target = target
+        if enabled_checks is not None:
+            self.enabled_checks = enabled_checks
+        elif mode:
+            if mode.upper() in ("ALL", "COMPOSITE", "BOTH"):
+                self.enabled_checks = target.get("enabled_checks") or list(registry_module.list_checks())
+            else:
+                self.enabled_checks = [mode.upper()]
+        else:
+            self.enabled_checks = target.get("enabled_checks") or [target.get("check_type", "TCP")]
+        self.mode = mode or "COMPOSITE"
+        self.timeout = timeout
 
     def run(self):
-        """
-        Entry point called automatically when QThread.start() is invoked.
-        Runs the appropriate check(s) and emits check_finished when done.
-        """
-        # Initialise result placeholders -- only the relevant ones will be filled.
-        ping_res = None
-        tcp_res  = None
-
-        if self.mode in ("PING", "BOTH"):
-            ping_res = monitor.ping_check(
-                equipment=self.equipment, host=self.host, timeout=self.timeout
+        """Executes all enabled modular checks via monitor.registry and emits composite results."""
+        try:
+            composite_result = monitor.registry.run_checks_for_target(
+                target=self.target,
+                enabled_checks=self.enabled_checks,
+                timeout=self.timeout,
             )
-        if self.mode in ("TCP", "BOTH"):
-            tcp_res = monitor.TCP_check(
-                equipment=self.equipment, host=self.host, port=self.port, timeout=self.timeout
-            )
-
-        # Package both results and the mode into one dict for the receiver
-        self.check_finished.emit({
-            "mode":     self.mode,
-            "ping_res": ping_res,
-            "tcp_res":  tcp_res,
-        })
+            composite_result["mode"] = self.mode
+            self.check_finished.emit(composite_result)
+        except Exception as exc:
+            import logging
+            logging.getLogger("SingleTargetWorker").exception("SingleTargetWorker execution failed")
+            err_payload = {
+                "target_id": self.target.get("id"),
+                "equipment": self.target.get("name", "Unknown"),
+                "host": self.target.get("host", ""),
+                "status": "OFFLINE",
+                "overall_status": "OFFLINE",
+                "error": str(exc),
+                "mode": self.mode,
+                "checks": {},
+            }
+            self.check_finished.emit(err_payload)
 
 
 # =============================================================================
@@ -283,6 +309,7 @@ class NetworkMonitorUI:
         self.scheduler.server_recovered.connect(self._on_server_recovered_alert)
         self.scheduler.insurance_attempt.connect(self._on_insurance_attempt)
         self.scheduled_workers = []  # Retains active worker thread references to prevent GC
+        self.active_scheduled_target_ids = set()  # Prevents thread piling on slower checks
 
         # Notification & Alert Coordinator (Desktop Tray + Async Email)
         self.notifier = AlertNotifier(self.window)
@@ -305,10 +332,10 @@ class NetworkMonitorUI:
         self.setup_table_filters()
         self.setup_settings_page()
         self.refresh_logs()
+        self.setup_inspector_tabs()
+        self.setup_form_multichecks()
 
-        # Server Inspector split layout
-        self.window.detBottomRow.setStretch(0, 1)
-        self.window.detBottomRow.setStretch(1, 1)
+        # Server Inspector domain tabs configured in setup_inspector_tabs
 
         # =====================================================================
         # APP RESOURCE & STORAGE MONITORING STATE (PERSISTED)
@@ -346,13 +373,30 @@ class NetworkMonitorUI:
         """Handles periodic and insurance retry triggers for scheduled server checks."""
         if not target:
             return
-        mode = target.get("check_type", "TCP").upper()
-        worker = SingleTargetWorker(target=target, mode=mode, timeout=self.check_timeout)
-        def on_done(payload, t=target, w=worker, r=check_reason):
+        tid = target.get("id") if isinstance(target, dict) else str(target)
+        if tid and tid in self.target_lookup:
+            target = self.target_lookup[tid]
+        if not isinstance(target, dict):
+            return
+
+        # Avoid piling duplicate worker threads if target's previous check is still in-flight
+        if tid and tid in self.active_scheduled_target_ids:
+            return
+
+        if tid:
+            self.active_scheduled_target_ids.add(tid)
+
+        enabled = target.get("enabled_checks") or [target.get("check_type", "TCP")]
+        worker = SingleTargetWorker(target=target, enabled_checks=enabled, timeout=self.check_timeout)
+        def on_done(payload, t=target, w=worker, r=check_reason, target_id=tid):
             """Processes finished scheduled check and releases worker reference."""
-            self._handle_single_check_finished(payload, t, source=r)
-            if w in self.scheduled_workers:
-                self.scheduled_workers.remove(w)
+            try:
+                self._handle_single_check_finished(payload, t, source=r)
+            finally:
+                if target_id:
+                    self.active_scheduled_target_ids.discard(target_id)
+                if w in self.scheduled_workers:
+                    self.scheduled_workers.remove(w)
         worker.check_finished.connect(on_done)
         self.scheduled_workers.append(worker)
         worker.start()
@@ -381,6 +425,7 @@ class NetworkMonitorUI:
         self.window.tblRecentServers.cellDoubleClicked.connect(
             lambda r, _: self._open_row_inspector(self.window.tblRecentServers, r)
         )
+        self.window.tblAllServers.itemSelectionChanged.connect(self._sync_selected_table_server)
 
     def load_target_data(self):
         """Loads data from storageH, rebuilds memory lookup indexes, and updates views."""
@@ -526,8 +571,8 @@ class NetworkMonitorUI:
     def update_dashboard_stat_cards(self):
         """Calculates and refreshes all top-level stat card metrics across the dashboard."""
         total = len(self.targets)
-        online_count = sum(1 for t in self.targets if t.get("status") == "ONLINE")
-        offline_count = sum(1 for t in self.targets if t.get("status") == "OFFLINE")
+        online_count = sum(1 for t in self.targets if t.get("status") in ("ONLINE", "DEGRADED", "WARNING"))
+        offline_count = sum(1 for t in self.targets if t.get("status") in ("OFFLINE", "VERIFYING"))
 
         # Calculate average response latency across active servers
         valid_latencies = [t["response_time_ms"] for t in self.targets if t.get("response_time_ms") is not None]
@@ -605,6 +650,303 @@ class NetworkMonitorUI:
     # CRUD OPERATIONS (CREATE, READ, UPDATE, DELETE) - SERVER CONFIGURATION FORM
     # =========================================================================
 
+    def _update_tab_enabled_state(self, proto_name: str, enabled: bool):
+        """Applies blur effect, shows/hides overlay banner, and updates toggle pill for a check tab."""
+        p_cap = proto_name.capitalize()
+        container = getattr(self.window, f"container{p_cap}", None)
+        banner = getattr(self.window, f"bannerDisabled{p_cap}", None)
+        chk = getattr(self.window, f"chk{p_cap}", None)
+        badge = getattr(self.window, f"lblBadge{p_cap}", None) or chk
+
+        is_traffic = (proto_name.upper() == "TRAFFIC")
+        active_text = "● ACTIVE (WIP)" if is_traffic else "● ACTIVE"
+        disabled_text = "○ DISABLED (WIP)" if is_traffic else "○ DISABLED"
+
+        if enabled:
+            if container is not None:
+                container.setGraphicsEffect(None)
+                container.setEnabled(True)
+            if banner is not None:
+                banner.hide()
+            if chk is not None:
+                chk.setText(active_text)
+                if is_traffic:
+                    chk.setStyleSheet(
+                        "QCheckBox { font-size: 11px; font-weight: 700; color: #38bdf8; "
+                        "background-color: rgba(56, 189, 248, 0.15); border: 1px solid #0284c7; "
+                        "border-radius: 6px; padding: 6px 14px; } "
+                        "QCheckBox:hover { background-color: rgba(56, 189, 248, 0.25); border: 1px solid #38bdf8; } "
+                        "QCheckBox::indicator { width: 0px; height: 0px; }"
+                    )
+                else:
+                    chk.setStyleSheet(
+                        "QCheckBox { font-size: 11px; font-weight: 700; color: #10b981; "
+                        "background-color: rgba(16, 185, 129, 0.15); border: 1px solid #059669; "
+                        "border-radius: 6px; padding: 6px 14px; } "
+                        "QCheckBox:hover { background-color: rgba(16, 185, 129, 0.25); border: 1px solid #10b981; } "
+                        "QCheckBox::indicator { width: 0px; height: 0px; }"
+                    )
+            elif badge is not None:
+                badge.setText("ACTIVE" if not is_traffic else "WIP / ACTIVE")
+        else:
+            if container is not None:
+                from PySide6.QtWidgets import QGraphicsBlurEffect
+                blur = QGraphicsBlurEffect(self.window)
+                blur.setBlurRadius(7)
+                container.setGraphicsEffect(blur)
+                container.setEnabled(False)
+            if banner is not None:
+                banner.show()
+            if chk is not None:
+                chk.setText(disabled_text)
+                chk.setStyleSheet(
+                    "QCheckBox { font-size: 11px; font-weight: 700; color: #64748b; "
+                    "background-color: #0f172a; border: 1px solid #334155; "
+                    "border-radius: 6px; padding: 6px 14px; } "
+                    "QCheckBox:hover { color: #94a3b8; background-color: #1e293b; border: 1px solid #475569; } "
+                    "QCheckBox::indicator { width: 0px; height: 0px; }"
+                )
+            elif badge is not None:
+                badge.setText("DISABLED" if not is_traffic else "WIP / OFF")
+
+    def _reset_form_check_configs(self):
+        """Resets all modular check parameter fields to default values."""
+        if not hasattr(self.window, "tabsFormChecks"):
+            return
+
+        # PING
+        if hasattr(self.window, "spnFormPingCount"):
+            self.window.spnFormPingCount.setValue(4)
+        if hasattr(self.window, "spnFormPingTimeout"):
+            self.window.spnFormPingTimeout.setValue(1000)
+
+        # TCP
+        if hasattr(self.window, "txtFormTcpPorts"):
+            self.window.txtFormTcpPorts.clear()
+        if hasattr(self.window, "spnFormTcpTimeout"):
+            self.window.spnFormTcpTimeout.setValue(3.0)
+
+        # HTTP
+        if hasattr(self.window, "txtFormHttpUrl"):
+            self.window.txtFormHttpUrl.clear()
+        if hasattr(self.window, "cmbFormHttpMethod"):
+            self.window.cmbFormHttpMethod.setCurrentText("GET")
+        if hasattr(self.window, "spnFormHttpStatus"):
+            self.window.spnFormHttpStatus.setValue(200)
+        if hasattr(self.window, "chkFormHttpRedirects"):
+            self.window.chkFormHttpRedirects.setChecked(True)
+        if hasattr(self.window, "spnFormHttpTimeout"):
+            self.window.spnFormHttpTimeout.setValue(5.0)
+
+        # HTTPS
+        if hasattr(self.window, "txtFormHttpsUrl"):
+            self.window.txtFormHttpsUrl.clear()
+        if hasattr(self.window, "cmbFormHttpsMethod"):
+            self.window.cmbFormHttpsMethod.setCurrentText("GET")
+        if hasattr(self.window, "spnFormHttpsStatus"):
+            self.window.spnFormHttpsStatus.setValue(200)
+        if hasattr(self.window, "chkFormHttpsVerifySsl"):
+            self.window.chkFormHttpsVerifySsl.setChecked(True)
+        if hasattr(self.window, "chkFormHttpsRedirects"):
+            self.window.chkFormHttpsRedirects.setChecked(True)
+        if hasattr(self.window, "spnFormHttpsTimeout"):
+            self.window.spnFormHttpsTimeout.setValue(5.0)
+
+        # DNS
+        if hasattr(self.window, "txtFormDnsDomain"):
+            self.window.txtFormDnsDomain.clear()
+        if hasattr(self.window, "cmbFormDnsRecordType"):
+            self.window.cmbFormDnsRecordType.setCurrentText("A")
+        if hasattr(self.window, "txtFormDnsResolvers"):
+            self.window.txtFormDnsResolvers.setText("1.1.1.1, 8.8.8.8")
+        if hasattr(self.window, "spnFormDnsTimeout"):
+            self.window.spnFormDnsTimeout.setValue(3.0)
+
+        # SNMP
+        if hasattr(self.window, "spnFormSnmpPort"):
+            self.window.spnFormSnmpPort.setValue(161)
+        if hasattr(self.window, "txtFormSnmpCommunity"):
+            self.window.txtFormSnmpCommunity.setText("public")
+        if hasattr(self.window, "cmbFormSnmpVersion"):
+            self.window.cmbFormSnmpVersion.setCurrentText("2c")
+        if hasattr(self.window, "spnFormSnmpTimeout"):
+            self.window.spnFormSnmpTimeout.setValue(3.0)
+
+        # TRAFFIC
+        if hasattr(self.window, "txtFormTrafficInterface"):
+            self.window.txtFormTrafficInterface.setText("any")
+        if hasattr(self.window, "spnFormTrafficDuration"):
+            self.window.spnFormTrafficDuration.setValue(3.0)
+        if hasattr(self.window, "spnFormTrafficSynThreshold"):
+            self.window.spnFormTrafficSynThreshold.setValue(50.0)
+        if hasattr(self.window, "spnFormTrafficSweepThreshold"):
+            self.window.spnFormTrafficSweepThreshold.setValue(10)
+        if hasattr(self.window, "txtFormTrafficTsharkPath"):
+            self.window.txtFormTrafficTsharkPath.clear()
+
+    def _populate_form_check_configs(self, target: Dict[str, Any]):
+        """Fills modular check parameter inputs from target['check_configs']."""
+        if not hasattr(self.window, "tabsFormChecks"):
+            return
+
+        self._reset_form_check_configs()
+        cfg_all = target.get("check_configs") or {}
+
+        # PING
+        cfg_ping = cfg_all.get("PING", {})
+        if "count" in cfg_ping and hasattr(self.window, "spnFormPingCount"):
+            self.window.spnFormPingCount.setValue(int(cfg_ping["count"]))
+        if "timeout_ms" in cfg_ping and hasattr(self.window, "spnFormPingTimeout"):
+            self.window.spnFormPingTimeout.setValue(int(cfg_ping["timeout_ms"]))
+
+        # TCP
+        cfg_tcp = cfg_all.get("TCP", {})
+        if hasattr(self.window, "txtFormTcpPorts"):
+            p_val = cfg_tcp.get("ports", "")
+            if isinstance(p_val, list):
+                p_val = ", ".join(str(p) for p in p_val)
+            self.window.txtFormTcpPorts.setText(str(p_val) if p_val else "")
+        if "timeout" in cfg_tcp and hasattr(self.window, "spnFormTcpTimeout"):
+            self.window.spnFormTcpTimeout.setValue(float(cfg_tcp["timeout"]))
+
+        # HTTP
+        cfg_http = cfg_all.get("HTTP", {})
+        if hasattr(self.window, "txtFormHttpUrl"):
+            self.window.txtFormHttpUrl.setText(str(cfg_http.get("url", "")))
+        if "method" in cfg_http and hasattr(self.window, "cmbFormHttpMethod"):
+            self.window.cmbFormHttpMethod.setCurrentText(str(cfg_http["method"]).upper())
+        if "expected_status" in cfg_http and hasattr(self.window, "spnFormHttpStatus"):
+            self.window.spnFormHttpStatus.setValue(int(cfg_http["expected_status"]))
+        if "follow_redirects" in cfg_http and hasattr(self.window, "chkFormHttpRedirects"):
+            self.window.chkFormHttpRedirects.setChecked(bool(cfg_http["follow_redirects"]))
+        if "timeout" in cfg_http and hasattr(self.window, "spnFormHttpTimeout"):
+            self.window.spnFormHttpTimeout.setValue(float(cfg_http["timeout"]))
+
+        # HTTPS
+        cfg_https = cfg_all.get("HTTPS", {})
+        if hasattr(self.window, "txtFormHttpsUrl"):
+            self.window.txtFormHttpsUrl.setText(str(cfg_https.get("url", "")))
+        if "method" in cfg_https and hasattr(self.window, "cmbFormHttpsMethod"):
+            self.window.cmbFormHttpsMethod.setCurrentText(str(cfg_https["method"]).upper())
+        if "expected_status" in cfg_https and hasattr(self.window, "spnFormHttpsStatus"):
+            self.window.spnFormHttpsStatus.setValue(int(cfg_https["expected_status"]))
+        if "verify_ssl" in cfg_https and hasattr(self.window, "chkFormHttpsVerifySsl"):
+            self.window.chkFormHttpsVerifySsl.setChecked(bool(cfg_https["verify_ssl"]))
+        if "follow_redirects" in cfg_https and hasattr(self.window, "chkFormHttpsRedirects"):
+            self.window.chkFormHttpsRedirects.setChecked(bool(cfg_https["follow_redirects"]))
+        if "timeout" in cfg_https and hasattr(self.window, "spnFormHttpsTimeout"):
+            self.window.spnFormHttpsTimeout.setValue(float(cfg_https["timeout"]))
+
+        # DNS
+        cfg_dns = cfg_all.get("DNS", {})
+        if hasattr(self.window, "txtFormDnsDomain"):
+            self.window.txtFormDnsDomain.setText(str(cfg_dns.get("domain", "") or cfg_dns.get("query_host", "")))
+        if "record_type" in cfg_dns and hasattr(self.window, "cmbFormDnsRecordType"):
+            self.window.cmbFormDnsRecordType.setCurrentText(str(cfg_dns["record_type"]).upper())
+        if hasattr(self.window, "txtFormDnsResolvers"):
+            r_val = cfg_dns.get("benchmark_resolvers")
+            if isinstance(r_val, list):
+                r_val = ", ".join(str(r) for r in r_val)
+            self.window.txtFormDnsResolvers.setText(str(r_val) if r_val else "1.1.1.1, 8.8.8.8")
+        if "timeout" in cfg_dns and hasattr(self.window, "spnFormDnsTimeout"):
+            self.window.spnFormDnsTimeout.setValue(float(cfg_dns["timeout"]))
+
+        # SNMP
+        cfg_snmp = cfg_all.get("SNMP", {})
+        if hasattr(self.window, "spnFormSnmpPort"):
+            snmp_p = cfg_snmp.get("port") or target.get("port") or 161
+            self.window.spnFormSnmpPort.setValue(int(snmp_p))
+        if hasattr(self.window, "txtFormSnmpCommunity"):
+            self.window.txtFormSnmpCommunity.setText(str(cfg_snmp.get("community", "public")))
+        if "version" in cfg_snmp and hasattr(self.window, "cmbFormSnmpVersion"):
+            self.window.cmbFormSnmpVersion.setCurrentText(str(cfg_snmp["version"]))
+        if "timeout" in cfg_snmp and hasattr(self.window, "spnFormSnmpTimeout"):
+            self.window.spnFormSnmpTimeout.setValue(float(cfg_snmp["timeout"]))
+
+        # TRAFFIC
+        cfg_traffic = cfg_all.get("TRAFFIC", {})
+        if hasattr(self.window, "txtFormTrafficInterface"):
+            self.window.txtFormTrafficInterface.setText(str(cfg_traffic.get("interface", "any")))
+        if "capture_duration_sec" in cfg_traffic and hasattr(self.window, "spnFormTrafficDuration"):
+            self.window.spnFormTrafficDuration.setValue(float(cfg_traffic["capture_duration_sec"]))
+        if "syn_threshold_pps" in cfg_traffic and hasattr(self.window, "spnFormTrafficSynThreshold"):
+            self.window.spnFormTrafficSynThreshold.setValue(float(cfg_traffic["syn_threshold_pps"]))
+        if "sweep_threshold_ports" in cfg_traffic and hasattr(self.window, "spnFormTrafficSweepThreshold"):
+            self.window.spnFormTrafficSweepThreshold.setValue(int(cfg_traffic["sweep_threshold_ports"]))
+        if hasattr(self.window, "txtFormTrafficTsharkPath"):
+            self.window.txtFormTrafficTsharkPath.setText(str(cfg_traffic.get("custom_tshark_path", "") or ""))
+
+    def _collect_form_check_configs(self, clean_host: str, port_val: Optional[int], enabled_checks: List[str]) -> Dict[str, Any]:
+        """Collects configured parameters from tabsFormChecks for all enabled checks."""
+        configs = {}
+        if not hasattr(self.window, "tabsFormChecks"):
+            return configs
+
+        if "PING" in enabled_checks:
+            configs["PING"] = {
+                "count": self.window.spnFormPingCount.value() if hasattr(self.window, "spnFormPingCount") else 4,
+                "timeout_ms": self.window.spnFormPingTimeout.value() if hasattr(self.window, "spnFormPingTimeout") else 1000,
+            }
+
+        if "TCP" in enabled_checks:
+            raw_ports = self.window.txtFormTcpPorts.text().strip() if hasattr(self.window, "txtFormTcpPorts") else ""
+            configs["TCP"] = {
+                "ports": raw_ports if raw_ports else ([port_val] if port_val else [80]),
+                "timeout": self.window.spnFormTcpTimeout.value() if hasattr(self.window, "spnFormTcpTimeout") else 3.0,
+            }
+
+        if "HTTP" in enabled_checks:
+            url_val = self.window.txtFormHttpUrl.text().strip() if hasattr(self.window, "txtFormHttpUrl") else ""
+            configs["HTTP"] = {
+                "url": url_val if url_val else (f"http://{clean_host}:{port_val}/" if (port_val and port_val != 80) else f"http://{clean_host}/"),
+                "method": self.window.cmbFormHttpMethod.currentText() if hasattr(self.window, "cmbFormHttpMethod") else "GET",
+                "expected_status": self.window.spnFormHttpStatus.value() if hasattr(self.window, "spnFormHttpStatus") else 200,
+                "follow_redirects": self.window.chkFormHttpRedirects.isChecked() if hasattr(self.window, "chkFormHttpRedirects") else True,
+                "timeout": self.window.spnFormHttpTimeout.value() if hasattr(self.window, "spnFormHttpTimeout") else 5.0,
+            }
+
+        if "HTTPS" in enabled_checks:
+            url_val = self.window.txtFormHttpsUrl.text().strip() if hasattr(self.window, "txtFormHttpsUrl") else ""
+            configs["HTTPS"] = {
+                "url": url_val if url_val else (f"https://{clean_host}:{port_val}/" if (port_val and port_val != 443) else f"https://{clean_host}/"),
+                "method": self.window.cmbFormHttpsMethod.currentText() if hasattr(self.window, "cmbFormHttpsMethod") else "GET",
+                "expected_status": self.window.spnFormHttpsStatus.value() if hasattr(self.window, "spnFormHttpsStatus") else 200,
+                "verify_ssl": self.window.chkFormHttpsVerifySsl.isChecked() if hasattr(self.window, "chkFormHttpsVerifySsl") else True,
+                "follow_redirects": self.window.chkFormHttpsRedirects.isChecked() if hasattr(self.window, "chkFormHttpsRedirects") else True,
+                "timeout": self.window.spnFormHttpsTimeout.value() if hasattr(self.window, "spnFormHttpsTimeout") else 5.0,
+            }
+
+        if "DNS" in enabled_checks:
+            dom_val = self.window.txtFormDnsDomain.text().strip() if hasattr(self.window, "txtFormDnsDomain") else ""
+            res_str = self.window.txtFormDnsResolvers.text().strip() if hasattr(self.window, "txtFormDnsResolvers") else ""
+            resolvers = [r.strip() for r in res_str.split(",") if r.strip()] if res_str else ["1.1.1.1", "8.8.8.8"]
+            configs["DNS"] = {
+                "domain": dom_val if dom_val else clean_host,
+                "record_type": self.window.cmbFormDnsRecordType.currentText() if hasattr(self.window, "cmbFormDnsRecordType") else "A",
+                "benchmark_resolvers": resolvers,
+                "timeout": self.window.spnFormDnsTimeout.value() if hasattr(self.window, "spnFormDnsTimeout") else 3.0,
+            }
+
+        if "SNMP" in enabled_checks:
+            configs["SNMP"] = {
+                "port": self.window.spnFormSnmpPort.value() if hasattr(self.window, "spnFormSnmpPort") else 161,
+                "community": self.window.txtFormSnmpCommunity.text().strip() if hasattr(self.window, "txtFormSnmpCommunity") else "public",
+                "version": self.window.cmbFormSnmpVersion.currentText() if hasattr(self.window, "cmbFormSnmpVersion") else "2c",
+                "timeout": self.window.spnFormSnmpTimeout.value() if hasattr(self.window, "spnFormSnmpTimeout") else 3.0,
+            }
+
+        if "TRAFFIC" in enabled_checks:
+            tpath = self.window.txtFormTrafficTsharkPath.text().strip() if hasattr(self.window, "txtFormTrafficTsharkPath") else ""
+            configs["TRAFFIC"] = {
+                "interface": self.window.txtFormTrafficInterface.text().strip() if hasattr(self.window, "txtFormTrafficInterface") else "any",
+                "capture_duration_sec": self.window.spnFormTrafficDuration.value() if hasattr(self.window, "spnFormTrafficDuration") else 3.0,
+                "syn_threshold_pps": self.window.spnFormTrafficSynThreshold.value() if hasattr(self.window, "spnFormTrafficSynThreshold") else 50.0,
+                "sweep_threshold_ports": self.window.spnFormTrafficSweepThreshold.value() if hasattr(self.window, "spnFormTrafficSweepThreshold") else 10,
+                "custom_tshark_path": tpath if tpath else None,
+            }
+
+        return configs
+
     def open_add_server_form(self):
         """
         Opens the embedded configuration form (page index 5) primed for a new server.
@@ -637,6 +979,28 @@ class NetworkMonitorUI:
         self.window.cmbFormType.setCurrentText("TCP")
         self.window.spnFormPort.setValue(80)
         self.handle_form_type_change("TCP")
+        if hasattr(self, "chkTcp"):
+            for chk in (self.chkPing, self.chkHttp, self.chkHttps, self.chkDns, self.chkSnmp, self.chkTraffic):
+                if chk is not None:
+                    chk.setChecked(False)
+            self.chkTcp.setChecked(True)
+
+        self._reset_form_check_configs()
+        for p_name, chk in (
+            ("Ping", self.chkPing),
+            ("Tcp", self.chkTcp),
+            ("Http", self.chkHttp),
+            ("Https", self.chkHttps),
+            ("Dns", self.chkDns),
+            ("Snmp", self.chkSnmp),
+            ("Traffic", self.chkTraffic),
+        ):
+            if chk is not None:
+                self._update_tab_enabled_state(p_name, chk.isChecked())
+
+        if hasattr(self.window, "tabsFormChecks"):
+            self.window.tabsFormChecks.setDocumentMode(True)
+            self.window.tabsFormChecks.setCurrentIndex(1)
 
         # Switch stacked widget to Form page (Index 5)
         self.window.stackedWidget.setCurrentIndex(5)
@@ -687,30 +1051,108 @@ class NetworkMonitorUI:
         self.window.spnFormPort.setValue(int(target.get("port") or 80))
         self.handle_form_type_change(check_type)
 
+        enabled_checks = [c.upper() for c in target.get("enabled_checks", [check_type])]
+        if hasattr(self, "chkTcp"):
+            self.chkPing.setChecked("PING" in enabled_checks)
+            self.chkTcp.setChecked("TCP" in enabled_checks)
+            self.chkHttp.setChecked("HTTP" in enabled_checks)
+            if hasattr(self, "chkHttps") and self.chkHttps is not None:
+                self.chkHttps.setChecked("HTTPS" in enabled_checks)
+            if hasattr(self, "chkDns") and self.chkDns is not None:
+                self.chkDns.setChecked("DNS" in enabled_checks)
+            self.chkSnmp.setChecked("SNMP" in enabled_checks)
+            self.chkTraffic.setChecked("TRAFFIC" in enabled_checks)
+
+        self._populate_form_check_configs(target)
+        for p_name, chk in (
+            ("Ping", self.chkPing),
+            ("Tcp", self.chkTcp),
+            ("Http", self.chkHttp),
+            ("Https", self.chkHttps),
+            ("Dns", self.chkDns),
+            ("Snmp", self.chkSnmp),
+            ("Traffic", self.chkTraffic),
+        ):
+            if chk is not None:
+                self._update_tab_enabled_state(p_name, chk.isChecked())
+
+        if hasattr(self.window, "tabsFormChecks"):
+            tab_idx = {
+                "PING": 0,
+                "TCP": 1,
+                "HTTP": 2,
+                "HTTPS": 3,
+                "DNS": 4,
+                "SNMP": 5,
+                "TRAFFIC": 6,
+            }.get(check_type, 1)
+            self.window.tabsFormChecks.setCurrentIndex(tab_idx)
+
         # Switch to Form page (Index 5)
         self.window.stackedWidget.setCurrentIndex(5)
         self.window.txtFormName.setFocus()
 
     def handle_form_type_change(self, selected_type: str):
         """
-        Dynamically adjusts form controls when the user toggles between TCP and PING.
-        
-        Why this exists:
-        - In TCP mode, a port number (1-65535) is essential for opening a socket connection.
-        - In PING mode (ICMP echo), ports do not exist at the protocol level (Layer 3/Network).
-          We disable the port input to make this distinction visually obvious to the user.
+        Dynamically adjusts form controls based on selected check type.
         """
-        is_tcp = (selected_type.strip().upper() == "TCP")
-        self.window.spnFormPort.setEnabled(is_tcp)
+        proto = selected_type.strip().upper()
+        port_needed = proto in ("TCP", "HTTP", "HTTPS", "DNS", "SNMP")
+        self.window.spnFormPort.setEnabled(port_needed)
 
-        if is_tcp:
-            self.window.lblFormPortHint.setText(
-                "Note: TCP checks test a specific port. For web servers use 80 (HTTP) or 443 (HTTPS)."
-            )
+        # Synchronize corresponding checkbox if available
+        if hasattr(self, "chkTcp"):
+            mapping = {
+                "TCP": self.chkTcp,
+                "PING": self.chkPing,
+                "HTTP": self.chkHttp,
+                "HTTPS": getattr(self, "chkHttps", None),
+                "DNS": getattr(self, "chkDns", None),
+                "SNMP": self.chkSnmp,
+                "TRAFFIC": self.chkTraffic,
+            }
+            chk_to_check = mapping.get(proto)
+            if chk_to_check is not None:
+                chk_to_check.setChecked(True)
+
+        # Switch modular tabs to match selected protocol
+        tab_idx = {
+            "PING": 0,
+            "TCP": 1,
+            "HTTP": 2,
+            "HTTPS": 3,
+            "DNS": 4,
+            "SNMP": 5,
+            "TRAFFIC": 6,
+        }.get(proto)
+        if tab_idx is not None and hasattr(self.window, "tabsFormChecks"):
+            self.window.tabsFormChecks.setCurrentIndex(tab_idx)
+
+        def _set_hint(text):
+            if hasattr(self.window, "lblFormPortHint") and self.window.lblFormPortHint is not None:
+                self.window.lblFormPortHint.setText(text)
+
+        if proto == "TCP":
+            _set_hint("Note: TCP checks test a specific port. For web servers use 80 (HTTP) or 443 (HTTPS).")
+        elif proto in ("HTTP", "HTTPS"):
+            default_p = 443 if proto == "HTTPS" else 80
+            if self.window.spnFormPort.value() in (80, 443, 53, 161):
+                self.window.spnFormPort.setValue(default_p)
+            _set_hint(f"Note: Web check ({proto}). Standard port is {default_p}.")
+        elif proto == "DNS":
+            if self.window.spnFormPort.value() in (80, 443, 161):
+                self.window.spnFormPort.setValue(53)
+            _set_hint("Note: DNS resolution check. Standard port is 53.")
+        elif proto == "SNMP":
+            if self.window.spnFormPort.value() in (80, 443, 53):
+                self.window.spnFormPort.setValue(161)
+            _set_hint("Note: SNMP query check. Standard port is 161.")
+        elif proto == "TRAFFIC":
+            _set_hint("Note: Wireshark packet capture traffic anomaly check (no port needed).")
+        elif proto == "PING":
+            _set_hint("Note: For Ping (ICMP) checks, port numbers are not applicable.")
         else:
-            self.window.lblFormPortHint.setText(
-                "Note: For PING verification, port values are automatically omitted."
-            )
+            _set_hint("Note: Port configuration.")
 
     def save_server_form(self):
         """
@@ -755,11 +1197,11 @@ class NetworkMonitorUI:
         check_type = self.window.cmbFormType.currentText().strip().upper()
 
         # Step 2: Determine port value
-        if check_type == "TCP":
+        port_needed = check_type in ("TCP", "HTTP", "HTTPS", "DNS", "SNMP")
+        if port_needed:
             # Prefer embedded port if typed in host box, otherwise read spinbox
             port_val = embedded_port if embedded_port is not None else int(self.window.spnFormPort.value())
         else:
-            # PING verification does not use service ports
             port_val = None
 
         # Step 3: Validate mandatory inputs
@@ -769,6 +1211,27 @@ class NetworkMonitorUI:
                 "Both Equipment Name and Host Address are required to configure a server."
             )
             return
+
+        # Collect enabled checks from checkboxes
+        enabled_checks = []
+        if hasattr(self, "chkTcp"):
+            for proto_name, chk_attr in (
+                ("PING", "chkPing"),
+                ("TCP", "chkTcp"),
+                ("HTTP", "chkHttp"),
+                ("HTTPS", "chkHttps"),
+                ("DNS", "chkDns"),
+                ("SNMP", "chkSnmp"),
+                ("TRAFFIC", "chkTraffic"),
+            ):
+                chk = getattr(self, chk_attr, None)
+                if chk is not None and chk.isChecked():
+                    enabled_checks.append(proto_name)
+        if not enabled_checks:
+            enabled_checks = [check_type]
+
+        # Collect modular check parameters
+        check_configs = self._collect_form_check_configs(clean_host, port_val, enabled_checks)
 
         # Step 4: Branch on EDIT vs ADD mode
         if self.editing_target_id is not None:
@@ -784,25 +1247,22 @@ class NetworkMonitorUI:
                     target["resolved_ip"] = None
                     target["status"] = "PENDING"
                     target["response_time_ms"] = None
-                    target["tcp_status"] = "STANDBY"
-                    target["tcp_latency_ms"] = None
-                    target["icmp_status"] = "STANDBY"
-                    target["icmp_latency_ms"] = None
-                    target["latency_delta_ms"] = None
-                    target["delta_analysis"] = "Run verification to compute protocol delta"
                     target["error"] = None
                     target["last_checked"] = None
+                    target["history"] = {}
 
                 target["host"] = clean_host
                 target["check_type"] = check_type
                 target["port"] = port_val
+                target["enabled_checks"] = enabled_checks
+                target["check_configs"] = check_configs
 
                 # Ensure all modern dual-protocol and counter keys exist on the target
                 for k, v in storageH.create_target_entry("", "", "").items():
                     target.setdefault(k, v)
 
                 # If this server is currently open in the Inspector, refresh its display
-                if self.current_inspected_id == target.get("id"):
+                if self.current_inspected_id is not None and str(self.current_inspected_id) == str(target.get("id")):
                     self.populate_server_detail_page(target["id"])
 
         else:
@@ -810,7 +1270,9 @@ class NetworkMonitorUI:
                 name=raw_name,
                 host=clean_host,
                 check_type=check_type,
-                port=port_val
+                port=port_val,
+                enabled_checks=enabled_checks,
+                check_configs=check_configs,
             )
             self.targets.append(new_entry)
 
@@ -853,8 +1315,9 @@ class NetworkMonitorUI:
         )
 
         if reply == QMessageBox.Yes:
-            # Stop the scheduler timer for the deleted server
+            # Stop the scheduler timer and clear any active down alert for the deleted server
             self.scheduler.stop_server_scheduler(selected_id)
+            self.notifier.down_servers.pop(selected_id, None)
 
             self.targets = [t for t in self.targets if t.get("id") != selected_id]
             storageH.save_targets(self.targets)
@@ -900,7 +1363,16 @@ class NetworkMonitorUI:
             status_text = table.item(row, 5).text().upper() if table.item(row, 5) else ""
 
             matches_search = (search_query in name_text) or (search_query in host_text) if search_query else True
-            matches_type = (type_filter == "ALL TYPES") or (type_filter == type_text)
+            target_id = table.item(row, 0).data(Qt.UserRole) if table.item(row, 0) else None
+            target_obj = self.target_lookup.get(target_id) if target_id else None
+            enabled_types = [c.upper() for c in target_obj.get("enabled_checks", [])] if target_obj else []
+
+            matches_type = (
+                (type_filter == "ALL TYPES")
+                or (type_filter == type_text)
+                or (type_filter in type_text)
+                or (type_filter in enabled_types)
+            )
             matches_status = (status_filter == "ALL STATUS") or (status_filter == status_text)
 
             row_visible = matches_search and matches_type and matches_status
@@ -936,7 +1408,7 @@ class NetworkMonitorUI:
     def setup_actions(self):
         """Connects UI buttons to their handlers."""
         # Restore and auto-save default protocol on top toolbar
-        saved_proto = self.settings.get("default_protocol", "TCP")
+        saved_proto = self.settings.get("default_protocol", "SELECTED")
         self.window.cmbHeaderCheckType.setCurrentText(saved_proto)
         self.window.cmbHeaderCheckType.currentTextChanged.connect(
             lambda proto: self.settings.set("default_protocol", proto)
@@ -952,11 +1424,25 @@ class NetworkMonitorUI:
         if hasattr(self.window, "btnQuickOpenDetails"):
             self.window.btnQuickOpenDetails.clicked.connect(self.open_quick_target_detail)
 
-        # Inspector Actions: Dedicated Dual Protocol Triggers
+        # Inspector Actions: Run All Checks and Navigation
         self.window.btnDetailBackToServers.clicked.connect(lambda: self.switch_page(1, self.window.btnNavServers))
-        self.window.btnDetailTestIcmp.clicked.connect(self.test_single_icmp)
-        self.window.btnDetailTestTcp.clicked.connect(self.test_single_tcp)
-        self.window.btnDetailTestNow.clicked.connect(self.test_single_both)
+        self.window.btnDetailRunChecks.clicked.connect(self.run_all_inspector_checks)
+
+        # Domain-specific inspector test triggers
+        if hasattr(self.window, "btnTestNetworkLink"):
+            self.window.btnTestNetworkLink.clicked.connect(lambda: self.run_domain_inspector_checks(["PING", "TCP"]))
+        if hasattr(self.window, "btnTestWebServices"):
+            self.window.btnTestWebServices.clicked.connect(lambda: self.run_domain_inspector_checks(["HTTP", "HTTPS", "DNS"]))
+        if hasattr(self.window, "btnTestHardware"):
+            self.window.btnTestHardware.clicked.connect(lambda: self.run_domain_inspector_checks(["SNMP"]))
+        if hasattr(self.window, "btnTestTraffic"):
+            self.window.btnTestTraffic.clicked.connect(lambda: self.run_domain_inspector_checks(["TRAFFIC"]))
+
+        # On-Page Direct Check Toggles
+        for proto in ("PING", "TCP", "HTTP", "HTTPS", "DNS", "SNMP", "TRAFFIC"):
+            chk_w = getattr(self.window, f"chkInsp{proto.capitalize()}", None)
+            if chk_w is not None:
+                chk_w.toggled.connect(lambda chk, p=proto: self.handle_inspector_toggle(p, chk))
 
         # CRUD Actions
         self.window.btnAddDevice.clicked.connect(self.open_add_server_form)
@@ -968,6 +1454,143 @@ class NetworkMonitorUI:
         self.window.btnFormSave.clicked.connect(self.save_server_form)
         self.window.btnFormCancel.clicked.connect(self.cancel_server_form)
         self.window.cmbFormType.currentTextChanged.connect(self.handle_form_type_change)
+
+    def setup_inspector_tabs(self):
+        """Initializes vector telemetry graphs inside the domain inspector tabs."""
+        self.tabsServerInspector = self.window.tabsServerInspector
+        if self.tabsServerInspector is not None:
+            self.tabsServerInspector.setDocumentMode(True)
+        self.bannerWireshark = self.window.bannerWireshark
+        self.lblWiresharkStatus = self.window.lblWiresharkStatus
+        self.btnRecheckWireshark = self.window.btnRecheckWireshark
+        self.btnRecheckWireshark.clicked.connect(self._recheck_wireshark)
+
+        # Domain action test buttons
+        self.btnTestNetworkLink = getattr(self.window, "btnTestNetworkLink", None)
+        self.btnTestWebServices = getattr(self.window, "btnTestWebServices", None)
+        self.btnTestHardware = getattr(self.window, "btnTestHardware", None)
+        self.btnTestTraffic = getattr(self.window, "btnTestTraffic", None)
+
+        # Tab 1: Network Link (Ping & TCP vector graphs)
+        self.graph_ping = gui_charts.HistoricalGraphWidget(profile="ping", parent=self.window.boxInspPing)
+        self.window.layoutPingGraph.addWidget(self.graph_ping)
+
+        self.graph_tcp = gui_charts.HistoricalGraphWidget(profile="tcp", parent=self.window.boxInspTcp)
+        self.window.layoutTcpGraph.addWidget(self.graph_tcp)
+
+        # Tab 2: Web & Services (HTTP vector graph)
+        self.graph_http = gui_charts.HistoricalGraphWidget(profile="http", parent=self.window.boxInspHttp)
+        self.window.layoutHttpGraph.addWidget(self.graph_http)
+
+        # Tab 3: Host Hardware (SNMP vector graph)
+        self.graph_snmp = gui_charts.HistoricalGraphWidget(profile="snmp", parent=self.window.boxInspSnmp)
+        self.window.layoutSnmpGraph.addWidget(self.graph_snmp)
+
+        # Tab 4: Traffic & Security (Wireshark PPS vector graph)
+        self.graph_traffic = gui_charts.HistoricalGraphWidget(profile="traffic", parent=self.window.boxInspTraffic)
+        self.window.layoutTrafficGraph.addWidget(self.graph_traffic)
+
+    def _recheck_wireshark(self):
+        """Scans for tshark.exe and updates the missing dependency banner."""
+        try:
+            import monitor.traffic as tr
+            found = tr.discover_tshark()
+        except Exception:
+            found = None
+        if found:
+            self.lblWiresharkStatus.setText(f"Wireshark active: {found}")
+            self.lblWiresharkStatus.setStyleSheet("color: #34d399; font-weight: 600;")
+            self.bannerWireshark.setStyleSheet("background-color: #064e3b; border: 1px solid #059669; border-radius: 8px; padding: 10px;")
+            self.btnRecheckWireshark.setText("Active")
+            self.btnRecheckWireshark.setEnabled(False)
+        else:
+            self.lblWiresharkStatus.setText("Wireshark (tshark.exe) not found on system. Install Wireshark and click Re-check.")
+            self.lblWiresharkStatus.setStyleSheet("color: #fde68a; font-weight: 600;")
+            self.bannerWireshark.setStyleSheet("background-color: #451a03; border: 1px solid #b45309; border-radius: 8px; padding: 10px;")
+            self.btnRecheckWireshark.setText("Re-check Wireshark")
+            self.btnRecheckWireshark.setEnabled(True)
+
+    def setup_form_multichecks(self):
+        """Initializes and wires multi-check selection checkboxes and protocol tabs for pageServerForm."""
+        from PySide6.QtWidgets import QHBoxLayout, QCheckBox, QLabel
+
+        # Check if already present on self.window (from modernized gui.ui)
+        self.chkPing = getattr(self.window, "chkPing", None)
+        self.chkTcp = getattr(self.window, "chkTcp", None)
+        self.chkHttp = getattr(self.window, "chkHttp", None)
+        self.chkHttps = getattr(self.window, "chkHttps", None)
+        self.chkDns = getattr(self.window, "chkDns", None)
+        self.chkSnmp = getattr(self.window, "chkSnmp", None)
+        self.chkTraffic = getattr(self.window, "chkTraffic", None)
+
+        if self.chkTcp is None:
+            # Fallback if running with a legacy UI file without XML checkboxes
+            frame_card = getattr(self.window, "frameFormCard", None)
+            if frame_card is not None and frame_card.layout() is not None:
+                lbl_checks = QLabel("Active Verification Modes:")
+                lbl_checks.setStyleSheet("font-weight: 600; color: #f8fafc; margin-top: 8px;")
+                box_layout = QHBoxLayout()
+                box_layout.setSpacing(14)
+                self.chkPing = QCheckBox("Ping")
+                self.chkTcp = QCheckBox("TCP")
+                self.chkHttp = QCheckBox("HTTP")
+                self.chkHttps = QCheckBox("HTTPS")
+                self.chkDns = QCheckBox("DNS")
+                self.chkSnmp = QCheckBox("SNMP")
+                self.chkTraffic = QCheckBox("Traffic")
+                for chk in (self.chkPing, self.chkTcp, self.chkHttp, self.chkHttps, self.chkDns, self.chkSnmp, self.chkTraffic):
+                    chk.setStyleSheet("color: #e2e8f0; font-weight: 500;")
+                    box_layout.addWidget(chk)
+                flayout = frame_card.layout()
+                idx = max(0, flayout.count() - 2)
+                flayout.insertWidget(idx, lbl_checks)
+                flayout.insertLayout(idx + 1, box_layout)
+
+        # Apply dark QListView popup to comboboxes so dropdown menu text is never white-on-white
+        from PySide6.QtWidgets import QListView
+        for cmb in (
+            getattr(self.window, "cmbFormType", None),
+            getattr(self.window, "cmbHeaderCheckType", None),
+            getattr(self.window, "cmbFilterType", None),
+            getattr(self.window, "cmbFilterStatus", None),
+            getattr(self.window, "cmbFormHttpMethod", None),
+            getattr(self.window, "cmbFormHttpsMethod", None),
+            getattr(self.window, "cmbFormDnsRecordType", None),
+            getattr(self.window, "cmbFormSnmpVersion", None),
+        ):
+            if cmb is not None:
+                cmb.setView(QListView())
+
+        # Wire aliases for backward compatibility with tests/badge lookups
+        for p_name in ("Ping", "Tcp", "Http", "Https", "Dns", "Snmp", "Traffic"):
+            chk_w = getattr(self.window, f"chk{p_name}", None)
+            if chk_w is not None:
+                setattr(self.window, f"lblBadge{p_name}", chk_w)
+
+        # Wire checkboxes inside each tab to update blur overlay, status badges, and tab selection
+        proto_info = [
+            ("Ping", self.chkPing, 0),
+            ("Tcp", self.chkTcp, 1),
+            ("Http", self.chkHttp, 2),
+            ("Https", self.chkHttps, 3),
+            ("Dns", self.chkDns, 4),
+            ("Snmp", self.chkSnmp, 5),
+            ("Traffic", self.chkTraffic, 6),
+        ]
+        for p_name, chk_widget, tab_idx in proto_info:
+            if chk_widget is not None:
+                def _make_handler(name, idx):
+                    def _on_toggled(checked):
+                        self._update_tab_enabled_state(name, checked)
+                        if checked and hasattr(self.window, "tabsFormChecks"):
+                            self.window.tabsFormChecks.setCurrentIndex(idx)
+                    return _on_toggled
+                chk_widget.toggled.connect(_make_handler(p_name, tab_idx))
+
+        # Initial refresh of all tab enabled states
+        for p_name, chk_widget, _ in proto_info:
+            if chk_widget is not None:
+                self._update_tab_enabled_state(p_name, chk_widget.isChecked())
 
     def setup_search_autocomplete(self):
         """Binds QCompleter on txtGlobalSearch to target names and hosts."""
@@ -1002,11 +1625,21 @@ class NetworkMonitorUI:
                 self.switch_page(2, self.window.btnNavDetails)
                 break
 
+    def _sync_selected_table_server(self):
+        """Synchronizes current_inspected_id with whichever row is selected in the server table."""
+        if hasattr(self.window, "stackedWidget") and self.window.stackedWidget.currentIndex() != 1:
+            return
+        sid = self.get_selected_server_id()
+        if sid:
+            self.current_inspected_id = sid
+
     def _open_row_inspector(self, table, row: int):
         """Opens double-clicked row from table in Server Inspector."""
         item = table.item(row, 0)
         if item and item.data(Qt.UserRole):
-            self.populate_server_detail_page(item.data(Qt.UserRole))
+            target_id = item.data(Qt.UserRole)
+            self.current_inspected_id = target_id
+            self.populate_server_detail_page(target_id)
             self.switch_page(2, self.window.btnNavDetails)
 
     def handle_quick_target_changed(self, index: int):
@@ -1046,14 +1679,44 @@ class NetworkMonitorUI:
         # Resolved IP
         self.window.lblInfoResolved.setText(f"Resolved IP: {target.get('resolved_ip') or '-'}")
 
-        # Individual Protocols
-        icmp_lat = target.get("icmp_latency_ms")
-        tcp_lat = target.get("tcp_latency_ms")
-        icmp_st = target.get("icmp_status", "Standby")
-        tcp_st = target.get("tcp_status", "Standby")
+        # Modular Telemetry (Extracted dynamically from rolling telemetry history)
+        history = target.get("history", {})
+        enabled = [c.upper() for c in target.get("enabled_checks", [target.get("check_type", "TCP")])]
 
-        self.window.lblInfoIcmp.setText(f"ICMP Ping: {icmp_lat} ms ({icmp_st})" if icmp_lat is not None else f"ICMP Ping: -- ms ({icmp_st})")
-        self.window.lblInfoTcp.setText(f"TCP Service: {tcp_lat} ms ({tcp_st})" if tcp_lat is not None else f"TCP Service: -- ms ({tcp_st})")
+        if len(enabled) == 1:
+            proto = enabled[0]
+            samples = history.get(proto, [])
+            latest = samples[-1] if samples else None
+            lat = latest.get("latency_ms") or latest.get("response_time_ms") if latest else None
+            st = latest.get("status", "Standby") if latest else "Standby"
+            lat_display = f"{lat} ms" if lat is not None else "-- ms"
+            self.window.lblInfoIcmp.setText(f"{proto} Check: {lat_display} ({st})")
+            self.window.lblInfoTcp.setText(f"Mode: Single Check ({proto})")
+        elif len(enabled) == 2:
+            p1, p2 = enabled[0], enabled[1]
+            s1 = history.get(p1, [])
+            l1 = s1[-1] if s1 else None
+            lat1 = l1.get("latency_ms") or l1.get("response_time_ms") if l1 else None
+            st1 = l1.get("status", "Standby") if l1 else "Standby"
+            lat1_disp = f"{lat1} ms" if lat1 is not None else "-- ms"
+
+            s2 = history.get(p2, [])
+            l2 = s2[-1] if s2 else None
+            lat2 = l2.get("latency_ms") or l2.get("response_time_ms") if l2 else None
+            st2 = l2.get("status", "Standby") if l2 else "Standby"
+            lat2_disp = f"{lat2} ms" if lat2 is not None else "-- ms"
+
+            self.window.lblInfoIcmp.setText(f"{p1}: {lat1_disp} ({st1})")
+            self.window.lblInfoTcp.setText(f"{p2}: {lat2_disp} ({st2})")
+        else:
+            primary_p = target.get("check_type", enabled[0]).upper() if enabled else "TCP"
+            p_samples = history.get(primary_p, [])
+            latest_p = p_samples[-1] if p_samples else None
+            lat_p = latest_p.get("latency_ms") or latest_p.get("response_time_ms") if latest_p else None
+            st_p = latest_p.get("status", "Standby") if latest_p else "Standby"
+            lat_p_disp = f"{lat_p} ms" if lat_p is not None else "-- ms"
+            self.window.lblInfoIcmp.setText(f"{primary_p} (Primary): {lat_p_disp} ({st_p})")
+            self.window.lblInfoTcp.setText(f"Active Checks: {', '.join(enabled)}")
 
         # Checks & Uptime Summary
         succ = target.get("successes", 0)
@@ -1082,7 +1745,7 @@ class NetworkMonitorUI:
             return
 
         self.current_inspected_id = target_id
-        self.test_single_both()
+        self.run_all_inspector_checks()
 
     def open_quick_target_detail(self):
         """
@@ -1108,8 +1771,8 @@ class NetworkMonitorUI:
 
     def populate_server_detail_page(self, target_id: str):
         """
-        Populates pageServerDetail with dual ICMP vs TCP metrics, protocol delta,
-        historical response telemetry, and system uptime percentages.
+        Populates pageServerDetail with modular domain telemetry (Network Link,
+        Web & Services, Host Hardware, Traffic & Security) and historical vector graphs.
         """
         target = self.target_lookup.get(target_id)
         if not target:
@@ -1122,256 +1785,434 @@ class NetworkMonitorUI:
         self.window.lblDetServerHost.setText(f"Host: {target.get('host')} | ID: {target.get('id')}")
 
         # Overall Status Badge
-        status = target.get("status", "PENDING")
+        status = target.get("status", "READY")
         self.window.lblDetStatusBadge.setText(status)
         badge_styles = {
             "ONLINE": "background-color: #064e3b; color: #34d399; font-weight: 700; padding: 6px 16px; border-radius: 8px;",
+            "DEGRADED": "background-color: #78350f; color: #fde047; font-weight: 700; padding: 6px 16px; border-radius: 8px;",
+            "WARNING": "background-color: #7c2d12; color: #fdba74; font-weight: 700; padding: 6px 16px; border-radius: 8px;",
+            "VERIFYING": "background-color: #1e3a8a; color: #93c5fd; font-weight: 700; padding: 6px 16px; border-radius: 8px;",
             "OFFLINE": "background-color: #7f1d1d; color: #f87171; font-weight: 700; padding: 6px 16px; border-radius: 8px;",
         }
         self.window.lblDetStatusBadge.setStyleSheet(
             badge_styles.get(status, "background-color: #1e293b; color: #94a3b8; font-weight: 700; padding: 6px 16px; border-radius: 8px;")
         )
 
-        # Primary Latency & Historical Averages
+        # Sync Header Check Mode Toggles without triggering handlers
+        enabled = target.get("enabled_checks", ["TCP"])
+        enabled_upper = [c.upper() for c in enabled] if isinstance(enabled, list) else ["TCP"]
+
+        self._suppress_insp_toggles = True
+        for proto in ("PING", "TCP", "HTTP", "HTTPS", "DNS", "SNMP", "TRAFFIC"):
+            chk_w = getattr(self.window, f"chkInsp{proto.capitalize()}", None)
+            if chk_w is not None:
+                chk_w.setChecked(proto in enabled_upper)
+        self._suppress_insp_toggles = False
+
+        # 4 Unified Metric Overview Cards
         last_lat = target.get("response_time_ms")
         self.window.lblValDetLat.setText(f"{last_lat} ms" if last_lat is not None else "-- ms")
 
         avg_lat = target.get("avg_response_time_ms")
         self.window.lblValDetAvgLat.setText(f"{avg_lat} ms" if avg_lat is not None else "-- ms")
 
-        # ICMP and TCP Individual Latencies
-        icmp_lat = target.get("icmp_latency_ms")
-        tcp_lat = target.get("tcp_latency_ms")
-
-        self.window.lblValDetIcmpLat.setText(f"{icmp_lat} ms" if icmp_lat is not None else "-- ms")
-        self.window.lblValDetTcpLat.setText(f"{tcp_lat} ms" if tcp_lat is not None else "-- ms")
-
-        # Latency Delta Calculation: Handshake Delta = TCP - ICMP
-        delta_val = target.get("latency_delta_ms")
-        if delta_val is not None:
-            self.window.lblValDetDelta.setText(f"+{delta_val} ms" if delta_val >= 0 else f"{delta_val} ms")
-        else:
-            self.window.lblValDetDelta.setText("-- ms")
-
-        # Update Secondary Protocol Badges
-        icmp_res = target.get("icmp_status", "STANDBY")
-        tcp_res = target.get("tcp_status", "STANDBY")
-
-        self.window.lblDetIcmpBadge.setText(f"PING: {icmp_res}")
-        self.window.lblDetTcpBadge.setText(f"TCP: {tcp_res}")
-
-        # Successes, Failures & Uptime Percentage
-        # Overall Uptime Percentage
         succ = target.get("successes", 0)
         fail = target.get("failures", 0)
         total = succ + fail
         uptime_pct = round((succ / total) * 100, 1) if total > 0 else 100.0
         self.window.lblValDetUptime.setText(f"{uptime_pct}%")
 
-        # Slot 1: Dedicated TCP Checks Counter
-        tcp_ok = target.get("tcp_successes", 0)
-        tcp_fail = target.get("tcp_failures", 0)
-        tcp_total = tcp_ok + tcp_fail
-        self.window.lblValDetTcpChecks.setText(f"{tcp_ok} / {tcp_total}")
+        self.window.lblValDetTotalChecks.setText(f"{succ} OK / {fail} Fail")
 
-        # Slot 2: Dedicated Ping Checks Counter
-        ping_ok = target.get("ping_successes", 0)
-        ping_fail = target.get("ping_failures", 0)
-        ping_total = ping_ok + ping_fail
-        self.window.lblValDetPingChecks.setText(f"{ping_ok} / {ping_total}")
-
-        # Protocol Diagnostics (TCP / ICMP)
-        self.window.lblDetSpecPort.setText(str(target.get("port") or "N/A"))
-        self.window.lblDetSpecType.setText(target.get("check_type", "N/A"))
-
-        tcp_status = target.get("tcp_status") or "Not Tested"
-        self.window.lblDetTcpResult.setText(str(tcp_status))
-        self.window.lblDetTcpResult.setStyleSheet(f"color: {STATUS_COLORS.get(tcp_status, '#94a3b8')}; font-weight: 700;")
-
-        # --- SECTION 2 (BOTTOM): ICMP Ping & Link Telemetry ---
-        # Ensure wordWrap is enabled on all dynamic text labels so text moves
-        # to the line below rather than pushing the panel wider
-        self.window.lblDetSpecResolved.setWordWrap(True)
-        self.window.lblDetDeltaAnalysis.setWordWrap(True)
-        self.window.lblDetSpecError.setWordWrap(True)
-
-        self.window.lblDetSpecResolved.setText(target.get("resolved_ip") or "Unresolved")
-
-        icmp_status = target.get("icmp_status") or "Not Tested"
-        self.window.lblDetIcmpResult.setText(str(icmp_status))
-        self.window.lblDetIcmpResult.setStyleSheet(f"color: {STATUS_COLORS.get(icmp_status, '#94a3b8')}; font-weight: 700;")
-
-        self.window.lblDetSpecLast.setText(target.get("last_checked") or "Never")
-
-        # Detailed protocol overhead delta narrative
-        delta_msg = target.get("delta_analysis", "Run 'Run Both Tests' to evaluate TCP handshake overhead vs ICMP link speed.")
-        self.window.lblDetDeltaAnalysis.setText(delta_msg)
-
-        # Operational error or normal message
+        # Diagnostics Meta Bar
+        self.window.lblDetSpecLast.setText(f"Last check: {target.get('last_checked') or 'Never'}")
         err = target.get("error")
         if err:
             self.window.lblDetSpecError.setText(err)
-            self.window.lblDetSpecError.setStyleSheet("color: #ef4444; font-weight: 500;")
+            self.window.lblDetSpecError.setStyleSheet("color: #ef4444; font-weight: 500; font-size: 11px;")
         else:
             self.window.lblDetSpecError.setText("None - System Operating Normally")
-            self.window.lblDetSpecError.setStyleSheet("color: #10b981; font-weight: 500;")
+            self.window.lblDetSpecError.setStyleSheet("color: #10b981; font-weight: 500; font-size: 11px;")
 
-    def _ensure_active_inspected_target(self) -> dict:
-        """Helper ensuring self.current_inspected_id points to a valid target."""
-        if not self.current_inspected_id:
-            selected_row_id = self.get_selected_server_id()
-            if selected_row_id:
-                self.current_inspected_id = selected_row_id
-            elif self.targets:
-                self.current_inspected_id = self.targets[0]["id"]
+        # Domain Tabs Accessibility & Status Labels
+        if hasattr(self, "tabsServerInspector") and self.tabsServerInspector is not None:
+            for tab_idx in range(self.tabsServerInspector.count()):
+                self.tabsServerInspector.setTabVisible(tab_idx, True)
+            has_net = "PING" in enabled_upper or "TCP" in enabled_upper
+            has_web = "HTTP" in enabled_upper or "HTTPS" in enabled_upper or "DNS" in enabled_upper
+            has_snmp = "SNMP" in enabled_upper
+            has_traffic = "TRAFFIC" in enabled_upper
+            self.tabsServerInspector.setTabText(0, "Network Link" if has_net else "Network Link (Standby)")
+            self.tabsServerInspector.setTabText(1, "Web and Services" if has_web else "Web and Services (Standby)")
+            self.tabsServerInspector.setTabText(2, "Host Hardware" if has_snmp else "Host Hardware (Standby)")
+            self.tabsServerInspector.setTabText(3, "Traffic and Security" if has_traffic else "Traffic and Security (Standby)")
+
+        # Ingest Telemetry History into Domain Tabs
+        history = target.get("history", {})
+
+        # TAB 1: Network Link (Ping & TCP)
+        ping_history = history.get("PING", [])
+        if hasattr(self, "graph_ping"):
+            self.graph_ping.set_data(ping_history)
+            self.graph_ping.repaint()
+        latest_ping = ping_history[-1] if ping_history else None
+        p_lat = latest_ping.get("latency_ms") or latest_ping.get("response_time_ms") if latest_ping else None
+        self.window.lblValDetIcmpLat.setText(f"Last: {p_lat} ms" if p_lat is not None else "Last: -- ms")
+        self.window.lblDetSpecResolved.setText(f"Resolved: {target.get('resolved_ip') or 'Unresolved'}")
+        p_drops = sum(1 for s in ping_history if s.get("status") == "OFFLINE")
+        p_loss = round((p_drops / len(ping_history)) * 100, 1) if ping_history else 0.0
+        self.window.lblPingLossRate.setText(f"Drop: {p_loss}%")
+
+        tcp_history = history.get("TCP", [])
+        if hasattr(self, "graph_tcp"):
+            self.graph_tcp.set_data(tcp_history)
+            self.graph_tcp.repaint()
+        latest_tcp = tcp_history[-1] if tcp_history else None
+        t_lat = latest_tcp.get("latency_ms") or latest_tcp.get("response_time_ms") if latest_tcp else None
+        self.window.lblValDetTcpLat.setText(f"Handshake: {t_lat} ms" if t_lat is not None else "Handshake: -- ms")
+        self.window.lblDetSpecPort.setText(f"Port: {target.get('port') or 'N/A'}")
+        t_stat = latest_tcp.get("status", "STANDBY") if latest_tcp else "STANDBY"
+        self.window.lblDetTcpResult.setText(f"Status: {t_stat}")
+
+        # TAB 2: Web & Services (HTTP, SSL, DNS)
+        http_history = sorted(history.get("HTTP", []) + history.get("HTTPS", []), key=lambda x: x.get("timestamp", "")) if ("HTTP" in history and "HTTPS" in history) else (history.get("HTTP") or history.get("HTTPS") or [])
+        if hasattr(self, "graph_http"):
+            self.graph_http.set_data(http_history)
+            self.graph_http.repaint()
+        latest_http = http_history[-1] if http_history else None
+        h_lat = latest_http.get("latency_ms") or latest_http.get("response_time_ms") if latest_http else None
+        self.window.lblValDetHttpLat.setText(f"Duration: {h_lat} ms" if h_lat is not None else "Duration: -- ms")
+        code = latest_http.get("status_code") if latest_http else None
+        self.window.lblHttpStatus.setText(f"Status: {code} OK" if code == 200 else (f"Status: {code}" if code else ("Status: OFFLINE" if latest_http and latest_http.get("status") == "OFFLINE" else "Status: --")))
+        url_str = (latest_http.get("url") or latest_http.get("final_url")) if latest_http else target.get("host")
+        self.window.lblHttpUrl.setText(f"URL: {url_str or '--'}")
+        if hasattr(self.window, "lblHttpRedirects"):
+            self.window.lblHttpRedirects.setText(f"Redirects: {latest_http.get('redirect_count', 0) if latest_http else 0}")
+
+        ssl_info = (latest_http.get("ssl") or latest_http.get("ssl_audit")) if latest_http and isinstance(latest_http.get("ssl") or latest_http.get("ssl_audit"), dict) else {}
+        if not ssl_info and "HTTPS" in history and history["HTTPS"]:
+            latest_https = history["HTTPS"][-1]
+            if isinstance(latest_https, dict):
+                ssl_info = (latest_https.get("ssl") or latest_https.get("ssl_audit")) if isinstance(latest_https.get("ssl") or latest_https.get("ssl_audit"), dict) else {}
+        if ssl_info:
+            self.window.lblSslIssuer.setText(f"Issuer: {ssl_info.get('issuer', 'Unknown')}")
+            days = ssl_info.get("days_remaining")
+            exp_str = f"in {days} days (Valid)" if days is not None and days > 0 else ("Expired" if ssl_info.get("is_expired") else "Invalid / Not verified")
+            self.window.lblSslExpiry.setText(f"Expiration: {exp_str}")
+        else:
+            self.window.lblSslIssuer.setText("Issuer: N/A (Plain HTTP / Not Checked)")
+            self.window.lblSslExpiry.setText("Expiration: N/A")
+
+        dns_history = history.get("DNS", [])
+        latest_dns = dns_history[-1] if dns_history else None
+        if latest_dns:
+            sys_lat = latest_dns.get("system_dns_latency_ms")
+            if sys_lat is None:
+                sys_lat = latest_dns.get("latency_ms") or latest_dns.get("response_time_ms")
+            bench_lat = latest_dns.get("benchmark_dns_latency_ms")
+            if bench_lat is None and isinstance(latest_dns.get("benchmark_latencies_ms"), dict):
+                bench_lat = latest_dns["benchmark_latencies_ms"].get("1.1.1.1") or (next(iter(latest_dns["benchmark_latencies_ms"].values())) if latest_dns["benchmark_latencies_ms"] else None)
+            delta = latest_dns.get("latency_delta_ms")
+            self.window.lblDnsPrimary.setText(f"System DNS: {sys_lat if sys_lat is not None else '--'} ms")
+            self.window.lblDnsBenchmark.setText(f"Benchmark (1.1.1.1): {bench_lat if bench_lat is not None else '--'} ms")
+            self.window.lblDnsDelta.setText(f"Delta: {delta if delta is not None else '--'} ms")
+        else:
+            self.window.lblDnsPrimary.setText("System DNS: -- ms")
+            self.window.lblDnsBenchmark.setText("Benchmark (1.1.1.1): -- ms")
+            self.window.lblDnsDelta.setText("Delta: -- ms")
+
+        # TAB 3: Host Hardware (SNMP Telemetry)
+        snmp_history = history.get("SNMP", [])
+        if hasattr(self, "graph_snmp"):
+            self.graph_snmp.set_data(snmp_history)
+            self.graph_snmp.repaint()
+        latest_snmp = snmp_history[-1] if snmp_history else None
+        if latest_snmp:
+            cpu_val = latest_snmp.get("cpu_load_pct")
+            ram_val = latest_snmp.get("ram_usage_pct")
+            disk_val = latest_snmp.get("disk_usage_pct")
+
+            if cpu_val is not None:
+                cpu = int(cpu_val)
+                self.window.barSlotCPU.setValue(cpu)
+                self.window.lblValSlotCPU.setText(f"{cpu}%")
+                self.window.lblValSlotCPU.setToolTip(f"CPU Load: {cpu}%")
             else:
-                return None
-        return self.target_lookup.get(self.current_inspected_id)
+                self.window.barSlotCPU.setValue(0)
+                self.window.lblValSlotCPU.setText("N/A")
+                self.window.lblValSlotCPU.setToolTip("Telemetry not provided by this SNMP agent")
 
-    def _launch_single_worker(self, mode: str):
+            if ram_val is not None:
+                ram = int(ram_val)
+                self.window.barSlotMemory.setValue(ram)
+                self.window.lblValSlotMemory.setText(f"{ram}%")
+                self.window.lblValSlotMemory.setToolTip(f"RAM Usage: {ram}%")
+            else:
+                self.window.barSlotMemory.setValue(0)
+                self.window.lblValSlotMemory.setText("N/A")
+                self.window.lblValSlotMemory.setToolTip("Telemetry not provided by this SNMP agent")
+
+            if disk_val is not None:
+                disk = int(disk_val)
+                self.window.barSlotDisk.setValue(disk)
+                self.window.lblValSlotDisk.setText(f"{disk}%")
+                self.window.lblValSlotDisk.setToolTip(f"Disk Usage: {disk}%")
+            else:
+                self.window.barSlotDisk.setValue(0)
+                self.window.lblValSlotDisk.setText("N/A")
+                self.window.lblValSlotDisk.setToolTip("Telemetry not provided by this SNMP agent")
+
+            uptime = latest_snmp.get("sys_uptime") or ("Offline" if latest_snmp.get("status") == "OFFLINE" else "--")
+            self.window.lblSnmpSysUptime.setText(f"Uptime: {uptime}")
+            descr = latest_snmp.get("sys_descr")
+            if not descr and latest_snmp.get("error"):
+                descr = f"Offline: {latest_snmp['error']}"
+            self.window.lblSnmpSysDescr.setText(f"System: {descr or '--'}")
+        else:
+            self.window.barSlotCPU.setValue(0)
+            self.window.lblValSlotCPU.setText("N/A")
+            self.window.barSlotMemory.setValue(0)
+            self.window.lblValSlotMemory.setText("N/A")
+            self.window.barSlotDisk.setValue(0)
+            self.window.lblValSlotDisk.setText("N/A")
+            self.window.lblSnmpSysUptime.setText("Uptime: --")
+            self.window.lblSnmpSysDescr.setText("System: --")
+
+        # TAB 4: Traffic & Security (Wireshark Anomaly)
+        self._recheck_wireshark()
+        traffic_history = history.get("TRAFFIC", [])
+        if hasattr(self, "graph_traffic"):
+            self.graph_traffic.set_data(traffic_history)
+            self.graph_traffic.repaint()
+        latest_traffic = traffic_history[-1] if traffic_history else None
+        if latest_traffic:
+            pps = latest_traffic.get("packet_rate_pps")
+            if pps is None:
+                pps = latest_traffic.get("pps", 0)
+            peak = latest_traffic.get("peak_pps", pps)
+            self.window.lblTrafficPPS.setText(f"{pps} PPS (Peak: {peak} PPS)")
+            threat = latest_traffic.get("threat_level", "NORMAL")
+            threat_styles = {
+                "NORMAL": "background-color: #064e3b; color: #34d399; font-weight: 700; padding: 4px 12px; border-radius: 6px;",
+                "SUSPICIOUS": "background-color: #78350f; color: #fde047; font-weight: 700; padding: 4px 12px; border-radius: 6px;",
+                "ATTACK WARNING": "background-color: #7f1d1d; color: #f87171; font-weight: 700; padding: 4px 12px; border-radius: 6px;",
+            }
+            self.window.lblThreatBadge.setText(f"SECURITY: {threat}")
+            self.window.lblThreatBadge.setStyleSheet(threat_styles.get(threat, threat_styles["NORMAL"]))
+            heur = latest_traffic.get("threat_reasons") or latest_traffic.get("heuristic_triggers", [])
+            if heur:
+                heur_txt = f"Alert: {', '.join(heur)}"
+            elif latest_traffic.get("status") == "OFFLINE" and latest_traffic.get("error"):
+                heur_txt = f"Offline: {latest_traffic['error']}"
+            else:
+                heur_txt = "Heuristics: Normal packet flow. No SYN flood or port sweep detected."
+            self.window.lblThreatDetails.setText(heur_txt)
+        else:
+            self.window.lblTrafficPPS.setText("0 PPS (Peak: 0 PPS)")
+            self.window.lblThreatBadge.setText("SECURITY: STANDBY")
+            self.window.lblThreatDetails.setText("Heuristics: Standby. Run verification to inspect network traffic.")
+
+    def handle_inspector_toggle(self, check_type: str, checked: bool):
         """
-        Shared launcher for all three inspector buttons.
-
-        This method is the bridge between a button click and the background thread.
-        It validates state, disables the test buttons so the user can't fire two
-        overlapping checks, creates a SingleTargetWorker, connects its signal, and
-        starts it. The buttons re-enable automatically in _handle_single_check_finished
-        once the result arrives.
-
-        Parameters:
-            mode - "PING", "TCP", or "BOTH" -- passed directly to SingleTargetWorker.
+        Triggered when operator clicks an on-page protocol toggle checkbox in Inspector.
+        Immediately updates target['enabled_checks'], persists changes, and refreshes UI.
         """
-        # If a single-target check is already running, ignore the new click.
-        # This prevents overlapping network calls that would produce confusing results.
-        if self.single_worker is not None and self.single_worker.isRunning():
+        if getattr(self, "_suppress_insp_toggles", False):
             return
-
-        # Validate that we have a target to test
         target = self._ensure_active_inspected_target()
         if not target:
             return
 
-        # Disable all three inspector test buttons while the check is in flight.
-        # This gives clear visual feedback that a check is happening.
-        self.window.btnDetailTestIcmp.setEnabled(False)
-        self.window.btnDetailTestTcp.setEnabled(False)
-        self.window.btnDetailTestNow.setEnabled(False)
+        enabled = list(target.get("enabled_checks", []))
+        norm_type = check_type.strip().upper()
 
-        # Create and configure the background worker thread
-        self.single_worker = SingleTargetWorker(
-            target=target,
-            mode=mode,
-            timeout=self.check_timeout
+        if checked and norm_type not in enabled:
+            enabled.append(norm_type)
+        elif not checked and norm_type in enabled:
+            if len(enabled) <= 1:
+                # Disallow disabling the final active check
+                self._suppress_insp_toggles = True
+                chk_w = getattr(self.window, f"chkInsp{check_type.capitalize()}", None)
+                if chk_w is not None:
+                    chk_w.setChecked(True)
+                self._suppress_insp_toggles = False
+                return
+            enabled.remove(norm_type)
+
+        target["enabled_checks"] = enabled
+        self.schedule_disk_save()
+        self.populate_server_detail_page(target.get("id"))
+        if checked:
+            self.run_domain_inspector_checks([norm_type])
+
+    def _ensure_active_inspected_target(self) -> dict:
+        """Helper ensuring self.current_inspected_id points to a valid target."""
+        if self.current_inspected_id and self.current_inspected_id in self.target_lookup:
+            return self.target_lookup[self.current_inspected_id]
+        selected_row_id = self.get_selected_server_id()
+        if selected_row_id and selected_row_id in self.target_lookup:
+            self.current_inspected_id = selected_row_id
+            return self.target_lookup[self.current_inspected_id]
+        if self.targets:
+            self.current_inspected_id = self.targets[0]["id"]
+            return self.target_lookup.get(self.current_inspected_id)
+        return None
+
+    def run_all_inspector_checks(self):
+        """
+        Triggered by 'Run All Checks' inspector button.
+        Executes all active verification checks concurrently on a background worker thread.
+        """
+        if self.single_worker is not None and self.single_worker.isRunning():
+            return
+
+        target = self._ensure_active_inspected_target()
+        if not target:
+            return
+
+        for btn_name in ("btnDetailRunChecks", "btnTestNetworkLink", "btnTestWebServices", "btnTestHardware", "btnTestTraffic"):
+            btn = getattr(self.window, btn_name, None)
+            if btn is not None:
+                btn.setEnabled(False)
+
+        self.window.lblDetStatusBadge.setText("CHECKING")
+        self.window.lblDetStatusBadge.setStyleSheet(
+            "background-color: #1e293b; color: #38bdf8; font-weight: 700; padding: 6px 16px; border-radius: 8px;"
         )
 
-        # Connect the signal BEFORE calling start().
-        # The lambda captures `target` by reference so the result handler
-        # can write results directly into the same dict that the lookup holds.
+        enabled = target.get("enabled_checks")
+        self.single_worker = SingleTargetWorker(
+            target=target,
+            enabled_checks=enabled,
+            timeout=self.check_timeout,
+        )
         self.single_worker.check_finished.connect(
             lambda payload, t=target: self._handle_single_check_finished(payload, t)
         )
-
-        # This launches the worker's run() method on the background thread.
         self.single_worker.start()
 
-    def test_single_icmp(self):
+    def run_domain_inspector_checks(self, domain_checks: List[str]):
         """
-        Triggered by the 'Ping Test' inspector button.
-        Offloads the ICMP echo check to a background thread so the GUI stays responsive.
+        Executes dedicated checks for a specific inspector subtab domain
+        (Network Link, Web Services, Host Hardware, or Traffic & Security).
         """
-        self._launch_single_worker("PING")
+        if self.single_worker is not None and self.single_worker.isRunning():
+            return
 
-    def test_single_tcp(self):
-        """
-        Triggered by the 'TCP Test' inspector button.
-        Offloads the TCP handshake check to a background thread so the GUI stays responsive.
-        """
-        self._launch_single_worker("TCP")
+        target = self._ensure_active_inspected_target()
+        if not target:
+            return
 
-    def test_single_both(self):
-        """
-        Triggered by the 'Inspect and Test' inspector button.
-        Offloads both ICMP and TCP checks sequentially to a background thread.
-        The delta calculation runs after both results are in.
-        """
-        self._launch_single_worker("BOTH")
+        target_enabled = target.get("enabled_checks") or []
+        checks_to_run = list(domain_checks)
+        if "HTTP" in checks_to_run and "HTTPS" in checks_to_run:
+            if "HTTPS" in target_enabled and "HTTP" not in target_enabled:
+                checks_to_run.remove("HTTP")
+            elif "HTTP" in target_enabled and "HTTPS" not in target_enabled:
+                checks_to_run.remove("HTTPS")
+
+        for btn_name in ("btnDetailRunChecks", "btnTestNetworkLink", "btnTestWebServices", "btnTestHardware", "btnTestTraffic"):
+            btn = getattr(self.window, btn_name, None)
+            if btn is not None:
+                btn.setEnabled(False)
+
+        self.window.lblDetStatusBadge.setText("CHECKING")
+        self.window.lblDetStatusBadge.setStyleSheet(
+            "background-color: #1e293b; color: #38bdf8; font-weight: 700; padding: 6px 16px; border-radius: 8px;"
+        )
+
+        self.single_worker = SingleTargetWorker(
+            target=target,
+            enabled_checks=checks_to_run,
+            timeout=self.check_timeout,
+        )
+        self.single_worker.check_finished.connect(
+            lambda payload, t=target: self._handle_single_check_finished(payload, t, source="DOMAIN")
+        )
+        self.single_worker.start()
 
     def _handle_single_check_finished(self, payload: dict, target: dict, source: str = "MANUAL"):
         """
-        Called automatically on the MAIN THREAD (via Qt signal) once
-        the SingleTargetWorker background thread completes its check.
-        
-        Parameters:
-            payload - Dict from SingleTargetWorker.check_finished
-            target  - The target dict to update in-place
-            source  - 'SCHEDULED' if triggered by ServerScheduler timer, else 'MANUAL'
+        Main-thread handler for SingleTargetWorker.check_finished signal.
+        Ingests composite results, updates targets, appends rolling history, and refreshes UI.
         """
-        # Re-enable the inspector buttons now that the check has finished
-        self.window.btnDetailTestIcmp.setEnabled(True)
-        self.window.btnDetailTestTcp.setEnabled(True)
-        self.window.btnDetailTestNow.setEnabled(True)
+        for btn_name in ("btnDetailRunChecks", "btnTestNetworkLink", "btnTestWebServices", "btnTestHardware", "btnTestTraffic"):
+            btn = getattr(self.window, btn_name, None)
+            if btn is not None:
+                btn.setEnabled(True)
 
-        mode     = payload["mode"]
-        ping_res = payload.get("ping_res")
-        tcp_res  = payload.get("tcp_res")
-        now      = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        target_id = (target.get("id") if isinstance(target, dict) else None) or payload.get("target_id")
+        if target_id and target_id in self.target_lookup:
+            canonical = self.target_lookup[target_id]
+            if isinstance(target, dict) and canonical is not target:
+                for k, v in target.items():
+                    if k not in canonical:
+                        canonical[k] = v
+            target = canonical
+        elif not isinstance(target, dict):
+            return
 
-        # --- Apply PING and TCP results ---
-        for proto, res in [("PING", ping_res), ("TCP", tcp_res)]:
-            if res is None:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        checks = payload.get("checks") or payload.get("multi_checks") or {}
+        if not checks and payload.get("check_type"):
+            checks = {payload["check_type"]: payload}
+
+        for proto, res in checks.items():
+            if not isinstance(res, dict):
                 continue
-            prefix = "icmp" if proto == "PING" else "tcp"
-            target[f"{prefix}_status"] = res["status"]
-            target[f"{prefix}_latency_ms"] = res["response_time_ms"]
-            target["last_checked"] = now
             if res.get("resolved_ip"):
                 target["resolved_ip"] = res["resolved_ip"]
-            self._update_target_counters(
-                target, res["status"], res["response_time_ms"], check_mode=proto
-            )
+            if not res.get("timestamp"):
+                res["timestamp"] = now
+            storageH.append_telemetry_sample(target, proto, res)
             self._log_and_append_result(target, proto, res)
 
-        # Update primary status and Last Latency based on whichever test was triggered
-        primary_res = None
-        if mode == "PING":
-            primary_res = ping_res
-        elif mode == "TCP":
-            primary_res = tcp_res
-        else:  # "BOTH"
-            preferred = target.get("check_type", "TCP").upper()
-            primary_res = tcp_res if preferred == "TCP" and tcp_res else ping_res
-            if not primary_res:
-                primary_res = tcp_res or ping_res
+        overall_status = payload.get("overall_status", "UNKNOWN")
+        primary_latency = payload.get("primary_latency_ms")
 
-        if primary_res:
-            res_status = primary_res["status"]
-            if source in ("SCHEDULED", "INSURANCE") and target.get("id"):
-                outcome = self.scheduler.handle_check_result(target, primary_res)
+        # Determine whether this run evaluated all enabled checks for the target
+        target_enabled = target.get("enabled_checks") or [target.get("check_type", "TCP")]
+        all_enabled_run = all(c in checks for c in target_enabled)
+
+        if all_enabled_run or source != "DOMAIN":
+            if target.get("id"):
+                eval_dict = {
+                    "status": overall_status if overall_status in ("ONLINE", "OFFLINE") else ("ONLINE" if overall_status in ("DEGRADED", "WARNING") else "OFFLINE"),
+                    "response_time_ms": primary_latency,
+                    "error": None,
+                }
+                outcome = self.scheduler.handle_check_result(target, eval_dict)
                 if outcome == "INSURANCE_CHECKING":
                     target["status"] = "VERIFYING"
-                elif outcome == "CONFIRMED_DOWN":
+                elif outcome in ("CONFIRMED_DOWN", "STILL_OFFLINE"):
                     target["status"] = "OFFLINE"
                 else:
-                    target["status"] = res_status
+                    target["status"] = overall_status
             else:
-                target["status"] = res_status
-                if target.get("id") and res_status == "ONLINE":
-                    self.scheduler.handle_check_result(target, primary_res)
+                target["status"] = overall_status
 
-            target["response_time_ms"] = primary_res["response_time_ms"]
-            target["error"] = primary_res.get("error")
+            target["response_time_ms"] = primary_latency
+            # Update math counters
+            self._update_target_counters(target, target["status"], primary_latency)
+        else:
+            # Domain-specific test: record domain latency if target has none yet, and don't trip offline alarms
+            if target.get("response_time_ms") is None and primary_latency is not None:
+                target["response_time_ms"] = primary_latency
+            if target.get("status") in ("PENDING", "UNKNOWN") and overall_status in ("ONLINE", "DEGRADED", "WARNING"):
+                target["status"] = overall_status
+            # Update math counters for domain verification checks
+            self._update_target_counters(target, overall_status, primary_latency)
 
-        # --- Recompute delta and refresh all views ---
-        self._recompute_delta_and_update(target)
+        target["last_checked"] = now
 
-        # Record storage attribution to monitor.log (SCHEDULED vs MANUAL)
+        # Refresh all views and persist
+        self._refresh_target_ui(target)
         self.record_log_growth(source=source)
 
     def _update_target_counters(self, target: dict, status: str, latency: float, check_mode: str = "TCP"):
-        """Helper to increment general and protocol-specific counters."""
-        is_online = (status == "ONLINE")
-
-        # Global Counters
+        """Helper to increment general target counters."""
+        is_online = (status in ("ONLINE", "DEGRADED", "WARNING"))
         if is_online:
             target["successes"] = target.get("successes", 0) + 1
             if latency is not None:
@@ -1380,18 +2221,6 @@ class NetworkMonitorUI:
                 target["avg_response_time_ms"] = round(tot / target["successes"], 2)
         else:
             target["failures"] = target.get("failures", 0) + 1
-
-        # Protocol-Specific Counters for the Dual Slots
-        if "TCP" in check_mode.upper():
-            if is_online:
-                target["tcp_successes"] = target.get("tcp_successes", 0) + 1
-            else:
-                target["tcp_failures"] = target.get("tcp_failures", 0) + 1
-        elif "PING" in check_mode.upper():
-            if is_online:
-                target["ping_successes"] = target.get("ping_successes", 0) + 1
-            else:
-                target["ping_failures"] = target.get("ping_failures", 0) + 1
 
     def _log_and_append_result(self, target: dict, mode: str, res: dict):
         """Appends audit record directly into the live Audit Logs console."""
@@ -1402,7 +2231,13 @@ class NetworkMonitorUI:
             host_str = target.get("host", "Unknown") if target else "Unknown"
             resolved_ip = res.get("resolved_ip") or "Unresolved"
             check_type = res.get("check_type") or mode
-            port = res.get("port") or (target.get("port", 80) if str(check_type).upper() == "TCP" else "N/A")
+            proto_upper = str(check_type).upper()
+            if res.get("port") is not None:
+                port = res["port"]
+            elif proto_upper in ("TCP", "HTTP", "HTTPS", "DNS", "SNMP"):
+                port = target.get("port") if target and target.get("port") is not None else {"TCP": 80, "HTTP": 80, "HTTPS": 443, "DNS": 53, "SNMP": 161}.get(proto_upper, "N/A")
+            else:
+                port = "N/A"
             status = res.get("status", "UNKNOWN")
             lat = res.get("response_time_ms")
             elapsed = f"{lat}ms" if lat is not None else "N/A"
@@ -1420,41 +2255,21 @@ class NetworkMonitorUI:
             )
         self.window.txt_audit_logs.append(log_line)
 
-    def _recompute_delta_and_update(self, target: dict):
-        """
-        Calculates Protocol Overhead Delta (TCP - ICMP) and updates all connected UI views.
-        """
-        icmp_lat = target.get("icmp_latency_ms")
-        tcp_lat = target.get("tcp_latency_ms")
-
-        if icmp_lat is not None and tcp_lat is not None:
-            delta = round(tcp_lat - icmp_lat, 2)
-            target["latency_delta_ms"] = delta
-            if delta >= 0:
-                target["delta_analysis"] = f"TCP handshake adds +{delta}ms overhead over raw ICMP ping."
-            else:
-                target["delta_analysis"] = f"TCP responded {abs(delta)}ms faster (routing divergence / ICMP deprioritization)."
-        elif target.get("tcp_status") == "OFFLINE" and target.get("icmp_status") == "ONLINE":
-            target["latency_delta_ms"] = None
-            target["delta_analysis"] = "Host responds to ICMP Ping, but TCP port connection is closed or blocked."
-        elif target.get("icmp_status") == "OFFLINE" and target.get("tcp_status") == "ONLINE":
-            target["latency_delta_ms"] = None
-            target["delta_analysis"] = "TCP port is open and online, but host blocks ICMP echo requests."
-        elif target.get("tcp_status") == "OFFLINE" and target.get("icmp_status") == "OFFLINE":
-            target["latency_delta_ms"] = None
-            target["delta_analysis"] = "Host is completely unreachable on both ICMP and TCP protocols."
-        else:
-            target["latency_delta_ms"] = None
-            target["delta_analysis"] = "Run 'Inspect & Test' to evaluate TCP handshake overhead vs ICMP link speed."
-
-        # Commit target update and render
+    def _refresh_target_ui(self, target: dict):
+        """Commits target state changes to disk and updates all attached UI views."""
         self.schedule_disk_save()
         self.update_single_server_row_in_place(target)
         self.update_dashboard_stat_cards()
 
+        tid = target.get("id")
         # Update Inspector if viewing this target
-        if self.current_inspected_id == target.get("id"):
-            self.populate_server_detail_page(target["id"])
+        if self.current_inspected_id is not None and str(self.current_inspected_id) == str(tid):
+            self.populate_server_detail_page(tid)
+
+        # Update header auto-refresh indicator
+        now_time = datetime.now().strftime("%H:%M:%S")
+        if hasattr(self.window, "lblLastCheckedHeader"):
+            self.window.lblLastCheckedHeader.setText(f"Last check: {now_time} (Auto-refresh: {self.online_interval}s)")
 
         # Update Recent Servers list
         if target in self.recent_targets:
@@ -1462,10 +2277,14 @@ class NetworkMonitorUI:
         self.recent_targets.insert(0, target)
         self.populate_recent_servers_table()
 
-        # Sync dashboard quick inspector view ONLY if this target is the currently selected one
+        # Sync dashboard quick inspector view if matching
         selected_quick_id = self.window.cmbQuickTarget.currentData()
-        if target.get("id") == selected_quick_id:
-            self.update_dashboard_quick_target_card(target["id"])
+        if tid is not None and str(tid) == str(selected_quick_id):
+            self.update_dashboard_quick_target_card(tid)
+
+    def _recompute_delta_and_update(self, target: dict):
+        """Clean forwarder to _refresh_target_ui."""
+        self._refresh_target_ui(target)
 
 
     # =========================================================================
@@ -2095,29 +2914,30 @@ class NetworkMonitorUI:
             elif outcome == "CONFIRMED_DOWN":
                 target["status"] = "OFFLINE"
             elif outcome in ("ONLINE", "RECOVERED"):
-                target["status"] = "ONLINE"
+                target["status"] = result.get("overall_status") or "ONLINE"
             elif outcome == "STILL_OFFLINE":
                 target["status"] = "OFFLINE"
             else:
-                target["status"] = result["status"]
+                target["status"] = result.get("overall_status") or result.get("status", "OFFLINE")
 
             # 1. Update in-memory telemetry
-            target["resolved_ip"] = result["resolved_ip"]
-            target["response_time_ms"] = result["response_time_ms"]
+            target["resolved_ip"] = result.get("resolved_ip") or target.get("resolved_ip")
+            target["response_time_ms"] = result.get("response_time_ms")
             target["last_checked"] = check_time
             target["error"] = result.get("error")
 
-            # Update specific protocol tracker based on what was checked
-            if mode == "TCP":
-                target["tcp_status"] = result["status"]
-                target["tcp_latency_ms"] = result["response_time_ms"]
+            # Append rolling history telemetry sample for all evaluated checks
+            multi_checks = result.get("multi_checks")
+            if multi_checks and isinstance(multi_checks, dict):
+                for chk_name, chk_data in multi_checks.items():
+                    if isinstance(chk_data, dict):
+                        storageH.append_telemetry_sample(target, chk_name, chk_data)
             else:
-                target["icmp_status"] = result["status"]
-                target["icmp_latency_ms"] = result["response_time_ms"]
+                storageH.append_telemetry_sample(target, mode, result)
 
             # 2. Update math counters
-            self._update_target_counters(target, result["status"], result["response_time_ms"], check_mode=mode)
-            self._recompute_delta_and_update(target)
+            self._update_target_counters(target, target["status"], result.get("response_time_ms"), check_mode=mode)
+            self._refresh_target_ui(target)
 
         # Decrement queue countdown
         if self.remaining_queue > 0:
@@ -2415,6 +3235,7 @@ class NetworkMonitorUI:
         """
         # 1. Stop all scheduler timers so no new checks start
         self.scheduler.stop_all()
+        self.active_scheduled_target_ids.clear()
 
         # 2. Wait for any active scheduled background workers to finish
         for w in list(self.scheduled_workers):
@@ -2432,7 +3253,8 @@ class NetworkMonitorUI:
         # 5. Conclude active email dispatch workers and hide tray icon
         self.notifier.stop_all(500)
 
-        # 6. Flush persistent storage metrics to disk
+        # 6. Synchronously flush all dirty target states and metrics to disk
+        self.flush_targets_to_disk()
         self._save_storage_metrics()
 
         event.accept()

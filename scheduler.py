@@ -52,26 +52,19 @@ class ServerScheduler(QObject):
 
         self.stop_server_scheduler(target_id)
         target_st = target.get("status", "ONLINE")
-        self.server_states[target_id] = "OFFLINE" if target_st == "OFFLINE" else "ONLINE"
+        self.server_states[target_id] = "PENDING" if target_st == "OFFLINE" else "ONLINE"
 
         timer = QTimer(self)
         timer.timeout.connect(lambda t=target: self.check_requested.emit(t, "SCHEDULED"))
         self.timers[target_id] = timer
 
-        if delay_ms > 0:
-            def _start_staggered():
-                """Starts timer after initial stagger delay."""
-                if target_id in self.timers:
-                    st = self.server_states.get(target_id, "ONLINE")
-                    cur_ms = self.normal_interval if st != "OFFLINE" else self.offline_interval
-                    timer.start(cur_ms)
-                    self.check_requested.emit(target, "SCHEDULED")
+        st = self.server_states.get(target_id, "ONLINE")
+        cur_ms = self.normal_interval if st != "OFFLINE" else self.offline_interval
+        timer.start(cur_ms)
 
-            QTimer.singleShot(delay_ms, _start_staggered)
+        if delay_ms > 0:
+            QTimer.singleShot(delay_ms, lambda t=target: self.check_requested.emit(t, "SCHEDULED"))
         else:
-            st = self.server_states.get(target_id, "ONLINE")
-            cur_ms = self.normal_interval if st != "OFFLINE" else self.offline_interval
-            timer.start(cur_ms)
             self.check_requested.emit(target, "SCHEDULED")
 
     def handle_check_result(self, target: dict, result: dict) -> str:
@@ -95,11 +88,11 @@ class ServerScheduler(QObject):
         if not result or not isinstance(result, dict):
             return "UNKNOWN"
 
-        status = result.get("status", "OFFLINE")
-        prev_state = self.server_states.get(target_id, "ONLINE" if target.get("status") != "OFFLINE" else "OFFLINE")
+        status = result.get("overall_status") or result.get("status", "OFFLINE")
+        prev_state = self.server_states.get(target_id, "PENDING")
 
-        # --- CASE 1: TARGET RESPONDED ONLINE ---
-        if status == "ONLINE":
+        # --- CASE 1: TARGET RESPONDED ONLINE (OR REACHABLE / DEGRADED / WARNING) ---
+        if status in ("ONLINE", "DEGRADED", "WARNING"):
             # Clear any pending insurance state or failure tally
             self.in_insurance.discard(target_id)
             self.failure_counts[target_id] = 0
@@ -123,7 +116,7 @@ class ServerScheduler(QObject):
 
         # --- CASE 2: TARGET FAILED TO RESPOND (OFFLINE) ---
         # If server was already confirmed OFFLINE and not currently in insurance testing,
-        # recurring checks simply confirm it is still offline without spamming retries or alerts.
+        # recurring checks confirm it is still offline while AlertNotifier's 30s batch timer handles desktop alerts.
         if prev_state == "OFFLINE" and target_id not in self.in_insurance:
             self.update_status(target_id, "OFFLINE")
             return "STILL_OFFLINE"

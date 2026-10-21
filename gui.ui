@@ -46,7 +46,7 @@
 
   <property name="windowTitle">
 
-   <string>Servermon v1.0 - Network Monitor Platform</string>
+   <string>Servermon v1.2 - Network Monitor Platform</string>
 
   </property>
 
@@ -214,8 +214,8 @@ QLineEdit,
 
 QComboBox, 
 
-QSpinBox {
-
+QSpinBox,
+QDoubleSpinBox {
     background-color: #1e293b;
 
     border: 1px solid #334155;
@@ -232,8 +232,8 @@ QSpinBox {
 
 QLineEdit:focus, 
 
-QSpinBox:focus, 
-
+QSpinBox:focus,
+QDoubleSpinBox:focus,
 QComboBox:focus {
 
     border: 1px solid #3b82f6;
@@ -242,16 +242,29 @@ QComboBox:focus {
 
 
 
-QComboBox QAbstractItemView {
-
+QComboBox QAbstractItemView,
+QComboBox QListView {
     background-color: #1e293b;
-
-    color: #f1f5f9;
-
-    selection-background-color: #2563eb;
-
+    color: #f8fafc;
+    selection-background-color: #3b82f6;
     selection-color: #ffffff;
+    border: 1px solid #334155;
+    outline: 0px;
+}
 
+QComboBox QAbstractItemView::item,
+QComboBox QListView::item {
+    background-color: #1e293b;
+    color: #f8fafc;
+    padding: 6px 10px;
+}
+
+QComboBox QAbstractItemView::item:selected,
+QComboBox QListView::item:selected,
+QComboBox QAbstractItemView::item:hover,
+QComboBox QListView::item:hover {
+    background-color: #2563eb;
+    color: #ffffff;
 }
 
 
@@ -274,7 +287,7 @@ QPushButton#btnAddDevice,
 
 QPushButton#btnPageAddDevice,
 
-QPushButton#btnDetailTestNow, 
+QPushButton#btnDetailRunChecks, 
 
 QPushButton#btnFormSave {
 
@@ -298,7 +311,7 @@ QPushButton#btnAddDevice:hover,
 
 QPushButton#btnPageAddDevice:hover,
 
-QPushButton#btnDetailTestNow:hover, 
+QPushButton#btnDetailRunChecks:hover, 
 
 QPushButton#btnFormSave:hover {
 
@@ -425,7 +438,13 @@ QFrame#cardDetUptime,
 QFrame#cardDetTcpChecks,
 
 QFrame#cardDetPingChecks,
-
+QFrame#boxInspPing,
+QFrame#boxInspTcp,
+QFrame#boxInspHttp,
+QFrame#boxInspSslDns,
+QFrame#boxInspSnmp,
+QFrame#boxInspGauges,
+QFrame#boxInspTraffic,
 QFrame#panelNetworkSpecs, 
 
 QFrame#panelHardwareSlots, 
@@ -454,9 +473,9 @@ QLabel#lblValLatency { color: #38bdf8; font-size: 24px; font-weight: 700; }
 
 QLabel#lblValDetLat { color: #38bdf8; font-size: 24px; font-weight: 700; }
 
-QLabel#lblValDetIcmpLat { color: #34d399; font-size: 24px; font-weight: 700; }
+QLabel#lblValDetIcmpLat { color: #34d399; font-size: 15px; font-weight: 700; }
 
-QLabel#lblValDetTcpLat { color: #38bdf8; font-size: 24px; font-weight: 700; }
+QLabel#lblValDetTcpLat { color: #38bdf8; font-size: 15px; font-weight: 700; }
 
 QLabel#lblValDetDelta { color: #fbbf24; font-size: 24px; font-weight: 700; }
 
@@ -748,7 +767,98 @@ QMessageBox QPushButton:pressed {
 
 }
 
-   </string>
+   
+
+/* =========================================================================
+   QTABWIDGET AND QTABBAR MODERN DARK STYLING
+   ========================================================================= */
+QPushButton#btnDetailRunChecks:disabled {
+    background-color: #1e293b;
+    color: #64748b;
+    border: 1px solid #334155;
+}
+
+QTabWidget {
+    background-color: transparent;
+}
+
+QTabWidget::pane {
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    background-color: #0b111e;
+    top: -1px;
+}
+
+QTabBar {
+    background-color: transparent;
+    qproperty-drawBase: 0;
+}
+
+QTabBar::tab {
+    background-color: #131d33;
+    color: #94a3b8;
+    border: 1px solid #1e293b;
+    border-bottom: none;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    padding: 8px 18px;
+    margin-right: 4px;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+QTabBar::tab:hover {
+    background-color: #1e293b;
+    color: #f8fafc;
+}
+
+QTabBar::tab:selected {
+    background-color: #0b111e;
+    color: #38bdf8;
+    border: 1px solid #1e293b;
+    border-bottom: 2px solid #38bdf8;
+}
+
+QTabBar::tab:!selected {
+    margin-top: 2px;
+}
+
+/* Tab pages and Inner Containers */
+QWidget#tabNetworkLink,
+QWidget#tabWebServices,
+QWidget#tabHostHardware,
+QWidget#tabTrafficSecurity,
+QWidget#tabFormPing,
+QWidget#tabFormTcp,
+QWidget#tabFormHttp,
+QWidget#tabFormHttps,
+QWidget#tabFormDns,
+QWidget#tabFormSnmp,
+QWidget#tabFormTraffic {
+    background-color: #0b111e;
+    border: none;
+}
+
+QWidget#containerPing,
+QWidget#containerTcp,
+QWidget#containerHttp,
+QWidget#containerHttps,
+QWidget#containerDns,
+QWidget#containerSnmp,
+QWidget#containerTraffic {
+    background-color: transparent;
+}
+
+QScrollArea#scrollServerForm {
+    background: transparent;
+    border: none;
+}
+
+QScrollArea#scrollServerForm > QWidget > QWidget {
+    background: transparent;
+}
+
+</string>
 
   </property>
 
@@ -794,7 +904,7 @@ QMessageBox QPushButton:pressed {
 
        <item><widget class="QLabel" name="lblBrandTitle"><property name="text"><string>Server Monitor</string></property></widget></item>
 
-       <item><widget class="QLabel" name="lblBrandSubtitle"><property name="text"><string>Servermon v1.0</string></property></widget></item>
+       <item><widget class="QLabel" name="lblBrandSubtitle"><property name="text"><string>Servermon v1.2</string></property></widget></item>
 
        <item><spacer name="spSidebarTop"><property name="orientation"><enum>Qt::Vertical</enum></property></spacer></item>
 
@@ -885,15 +995,16 @@ QMessageBox QPushButton:pressed {
           <item>
 
            <widget class="QComboBox" name="cmbHeaderCheckType">
-
-            <property name="minimumSize"><size><width>95</width><height>34</height></size></property>
-
-            <item><property name="text"><string>TCP</string></property></item>
-
-            <item><property name="text"><string>PING</string></property></item>
-
+            <property name="minimumSize"><size><width>110</width><height>34</height></size></property>
             <item><property name="text"><string>SELECTED</string></property></item>
-
+            <item><property name="text"><string>ALL</string></property></item>
+            <item><property name="text"><string>PING</string></property></item>
+            <item><property name="text"><string>TCP</string></property></item>
+            <item><property name="text"><string>HTTP</string></property></item>
+            <item><property name="text"><string>HTTPS</string></property></item>
+            <item><property name="text"><string>DNS</string></property></item>
+            <item><property name="text"><string>SNMP</string></property></item>
+            <item><property name="text"><string>TRAFFIC</string></property></item>
            </widget>
 
           </item>
@@ -1158,14 +1269,15 @@ QMessageBox QPushButton:pressed {
 
              <item>
 
-              <widget class="QComboBox" name="cmbFilterType">
-
+                            <widget class="QComboBox" name="cmbFilterType">
                <item><property name="text"><string>All Types</string></property></item>
-
                <item><property name="text"><string>PING</string></property></item>
-
                <item><property name="text"><string>TCP</string></property></item>
-
+               <item><property name="text"><string>HTTP</string></property></item>
+               <item><property name="text"><string>HTTPS</string></property></item>
+               <item><property name="text"><string>DNS</string></property></item>
+               <item><property name="text"><string>SNMP</string></property></item>
+               <item><property name="text"><string>TRAFFIC</string></property></item>
               </widget>
 
              </item>
@@ -1249,636 +1361,415 @@ QMessageBox QPushButton:pressed {
 
 
          <!-- Page 2: Server Inspector -->
-
          <widget class="QWidget" name="pageServerDetail">
-
           <layout class="QVBoxLayout" name="p2_layout">
-
-           <property name="spacing"><number>16</number></property>
-
+           <property name="spacing"><number>14</number></property>
            <property name="leftMargin"><number>24</number></property>
-
-           <property name="topMargin"><number>20</number></property>
-
+           <property name="topMargin"><number>18</number></property>
            <property name="rightMargin"><number>24</number></property>
+           <property name="bottomMargin"><number>18</number></property>
 
-           <property name="bottomMargin"><number>20</number></property>
-
-
-
-           <!-- Inspector Header -->
-
+           <!-- Inspector Header Row -->
            <item>
-
             <layout class="QHBoxLayout" name="detHeaderRow">
-
+             <property name="spacing"><number>12</number></property>
              <item>
-
               <layout class="QVBoxLayout">
-
                <item><widget class="QLabel" name="lblDetServerName"><property name="text"><string>Select a server</string></property></widget></item>
-
                <item><widget class="QLabel" name="lblDetServerHost"><property name="text"><string>Host: - | ID: -</string></property></widget></item>
-
               </layout>
-
              </item>
 
+             <item><spacer name="spDetHeader1"><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
 
+             <!-- Direct On-Page Protocol Toggles -->
+             <item>
+              <widget class="QFrame" name="frameInspCheckToggles">
+               <layout class="QHBoxLayout" name="layoutInspCheckToggles">
+                <property name="spacing"><number>8</number></property>
+                <property name="leftMargin"><number>8</number></property>
+                <property name="topMargin"><number>4</number></property>
+                <property name="rightMargin"><number>8</number></property>
+                <property name="bottomMargin"><number>4</number></property>
+                <item><widget class="QLabel" name="lblInspTogglesTitle"><property name="text"><string>Monitors:</string></property><property name="styleSheet"><string notr="true">color: #94a3b8; font-weight: 600; font-size: 11px;</string></property></widget></item>
+                <item><widget class="QCheckBox" name="chkInspPing"><property name="text"><string>Ping</string></property></widget></item>
+                <item><widget class="QCheckBox" name="chkInspTcp"><property name="text"><string>TCP</string></property></widget></item>
+                <item><widget class="QCheckBox" name="chkInspHttp"><property name="text"><string>HTTP</string></property></widget></item>
+                <item><widget class="QCheckBox" name="chkInspHttps"><property name="text"><string>HTTPS</string></property></widget></item>
+                <item><widget class="QCheckBox" name="chkInspDns"><property name="text"><string>DNS</string></property></widget></item>
+                <item><widget class="QCheckBox" name="chkInspSnmp"><property name="text"><string>SNMP</string></property></widget></item>
+                <item><widget class="QCheckBox" name="chkInspTraffic"><property name="text"><string>Traffic</string></property></widget></item>
+               </layout>
+              </widget>
+             </item>
 
-             <item><spacer name="spDetHeader"><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
-
-
+             <item><spacer name="spDetHeader2"><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
 
              <item>
-
               <widget class="QLabel" name="lblDetStatusBadge">
-
                <property name="text"><string>READY</string></property>
-
                <property name="styleSheet"><string notr="true">background-color: #1e293b; color: #94a3b8; font-weight: 700; padding: 6px 16px; border-radius: 8px;</string></property>
-
               </widget>
-
              </item>
 
-
-
-             <item>
-
-              <widget class="QLabel" name="lblDetIcmpBadge">
-
-               <property name="text"><string>PING: STANDBY</string></property>
-
-               <property name="styleSheet"><string notr="true">background-color: #064e3b; color: #34d399; font-weight: 700; padding: 6px 14px; border-radius: 8px;</string></property>
-
-              </widget>
-
-             </item>
-
-
-
-             <item>
-
-              <widget class="QLabel" name="lblDetTcpBadge">
-
-               <property name="text"><string>TCP: STANDBY</string></property>
-
-               <property name="styleSheet"><string notr="true">background-color: #1e3a8a; color: #60a5fa; font-weight: 700; padding: 6px 14px; border-radius: 8px;</string></property>
-
-              </widget>
-
-             </item>
-
-
-
-             <item><widget class="QPushButton" name="btnDetailTestIcmp"><property name="text"><string>Test Ping</string></property></widget></item>
-
-             <item><widget class="QPushButton" name="btnDetailTestTcp"><property name="text"><string>Test Port</string></property></widget></item>
-
-             <item><widget class="QPushButton" name="btnDetailTestNow"><property name="text"><string>Run Both Tests</string></property></widget></item>
-
+             <item><widget class="QPushButton" name="btnDetailRunChecks"><property name="text"><string>Run All Checks</string></property></widget></item>
              <item><widget class="QPushButton" name="btnDetailBackToServers"><property name="text"><string>Back to Server Directory</string></property></widget></item>
-
             </layout>
-
            </item>
 
-
-
-           <!-- Inspector Metric Cards -->
-
+           <!-- Inspector Metric Cards (4 Unified Domain Cards) -->
            <item>
-
             <layout class="QHBoxLayout" name="detStatsRow">
-
              <property name="spacing"><number>12</number></property>
 
-
-
-             <!-- Latency Card -->
-
+             <!-- Primary Latency Card -->
              <item>
-
               <widget class="QFrame" name="cardDetLat">
-
                <layout class="QVBoxLayout">
-
                 <item><widget class="QLabel" name="lblValDetLat"><property name="text"><string>-- ms</string></property></widget></item>
-
-                <item><widget class="QLabel" name="lblTitleDetLat"><property name="text"><string>Last Latency</string></property></widget></item>
-
+                <item><widget class="QLabel" name="lblTitleDetLat"><property name="text"><string>Response Latency</string></property></widget></item>
                </layout>
-
               </widget>
-
              </item>
-
-
-
-             <!-- ICMP Card -->
-
-             <item>
-
-              <widget class="QFrame" name="cardDetIcmp">
-
-               <layout class="QVBoxLayout">
-
-                <item><widget class="QLabel" name="lblValDetIcmpLat"><property name="text"><string>-- ms</string></property></widget></item>
-
-                <item><widget class="QLabel" name="lblTitleDetIcmp"><property name="text"><string>Ping Latency</string></property></widget></item>
-
-               </layout>
-
-              </widget>
-
-             </item>
-
-
-
-             <!-- TCP Card -->
-
-             <item>
-
-              <widget class="QFrame" name="cardDetTcp">
-
-               <layout class="QVBoxLayout">
-
-                <item><widget class="QLabel" name="lblValDetTcpLat"><property name="text"><string>-- ms</string></property></widget></item>
-
-                <item><widget class="QLabel" name="lblTitleDetTcp"><property name="text"><string>Port Latency</string></property></widget></item>
-
-               </layout>
-
-              </widget>
-
-             </item>
-
-
-
-             <!-- Delta Card -->
-
-             <item>
-
-              <widget class="QFrame" name="cardDetDelta">
-
-               <layout class="QVBoxLayout">
-
-                <item><widget class="QLabel" name="lblValDetDelta"><property name="text"><string>-- ms</string></property></widget></item>
-
-                <item><widget class="QLabel" name="lblTitleDetDelta"><property name="text"><string>Protocol Delta</string></property></widget></item>
-
-               </layout>
-
-              </widget>
-
-             </item>
-
-
 
              <!-- Average Latency Card -->
-
              <item>
-
               <widget class="QFrame" name="cardDetAvgLat">
-
                <layout class="QVBoxLayout">
-
                 <item><widget class="QLabel" name="lblValDetAvgLat"><property name="text"><string>-- ms</string></property></widget></item>
-
                 <item><widget class="QLabel" name="lblTitleDetAvgLat"><property name="text"><string>Average Latency</string></property></widget></item>
-
                </layout>
-
               </widget>
-
              </item>
 
-
-
-             <!-- Uptime Card -->
-
+             <!-- Availability Card -->
              <item>
-
               <widget class="QFrame" name="cardDetUptime">
-
                <layout class="QVBoxLayout">
-
                 <item><widget class="QLabel" name="lblValDetUptime"><property name="text"><string>100.0%</string></property></widget></item>
-
                 <item><widget class="QLabel" name="lblTitleDetUptime"><property name="text"><string>Availability Rate</string></property></widget></item>
-
                </layout>
-
               </widget>
-
              </item>
 
-
-
-             <!-- TCP Checks Counter -->
-
+             <!-- Total Cycles Card -->
              <item>
-
-              <widget class="QFrame" name="cardDetTcpChecks">
-
+              <widget class="QFrame" name="cardDetTotalChecks">
                <layout class="QVBoxLayout">
-
-                <item><widget class="QLabel" name="lblValDetTcpChecks"><property name="text"><string>0 / 0</string></property></widget></item>
-
-                <item><widget class="QLabel" name="lblTitleDetTcpChecks"><property name="text"><string>TCP Checks (OK / Total)</string></property></widget></item>
-
+                <item><widget class="QLabel" name="lblValDetTotalChecks"><property name="text"><string>0 Cycles</string></property></widget></item>
+                <item><widget class="QLabel" name="lblTitleDetTotalChecks"><property name="text"><string>Verification Cycles</string></property></widget></item>
                </layout>
-
               </widget>
-
              </item>
-
-
-
-             <!-- Ping Checks Counter -->
-
-             <item>
-
-              <widget class="QFrame" name="cardDetPingChecks">
-
-               <layout class="QVBoxLayout">
-
-                <item><widget class="QLabel" name="lblValDetPingChecks"><property name="text"><string>0 / 0</string></property></widget></item>
-
-                <item><widget class="QLabel" name="lblTitleDetPingChecks"><property name="text"><string>Ping Checks (OK / Total)</string></property></widget></item>
-
-               </layout>
-
-              </widget>
-
-             </item>
-
-
-
             </layout>
-
            </item>
 
-
-
-           <!-- Diagnostics and Hardware Panels -->
-
+           <!-- Diagnostics Meta Bar -->
            <item>
-
-            <layout class="QHBoxLayout" name="detBottomRow">
-
-             <property name="spacing"><number>14</number></property>
-
-
-
-             <!-- Protocol Diagnostics Panel -->
-
-              <item>
-
-               <widget class="QFrame" name="panelNetworkSpecs">
-
-                <layout class="QVBoxLayout" name="layoutNetworkSpecs">
-
-                 <property name="spacing"><number>10</number></property>
-
-                 <property name="leftMargin"><number>16</number></property>
-
-                 <property name="topMargin"><number>14</number></property>
-
-                 <property name="rightMargin"><number>16</number></property>
-
-                 <property name="bottomMargin"><number>14</number></property>
-
-
-
-                 <item>
-
-                  <widget class="QLabel" name="lblSpecHeader">
-
-                   <property name="text"><string>Protocol Telemetry &amp; Comparison</string></property>
-
-                  </widget>
-
-                 </item>
-
-
-
-                 <!-- TCP Diagnostics -->
-
-                 <item>
-
-                  <widget class="QFrame" name="frameTcpSection">
-
-                   <property name="styleSheet">
-
-                    <string notr="true">background-color: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 6px;</string>
-
-                   </property>
-
-                   <layout class="QVBoxLayout" name="layoutTcpSection">
-
-                    <property name="spacing"><number>6</number></property>
-
-                    <property name="leftMargin"><number>12</number></property>
-
-                    <property name="topMargin"><number>8</number></property>
-
-                    <property name="rightMargin"><number>12</number></property>
-
-                    <property name="bottomMargin"><number>8</number></property>
-
-
-
-                    <item>
-
-                     <widget class="QLabel" name="lblTcpSectionHeader">
-
-                      <property name="text"><string>TCP Connection and Port Status</string></property>
-
-                      <property name="styleSheet">
-
-                       <string notr="true">color: #38bdf8; font-weight: 700; font-size: 13px;</string>
-
-                      </property>
-
-                     </widget>
-
-                    </item>
-
-
-
-                    <item>
-
-                     <layout class="QFormLayout" name="formTcpSpecs">
-
-                      <property name="horizontalSpacing"><number>14</number></property>
-
-                      <property name="verticalSpacing"><number>6</number></property>
-
-
-
-                      <item row="0" column="0">
-
-                       <widget class="QLabel"><property name="text"><string>Target Service Port:</string></property><property name="styleSheet"><string notr="true">color: #94a3b8;</string></property></widget>
-
-                      </item>
-
-                      <item row="0" column="1">
-
-                       <widget class="QLabel" name="lblDetSpecPort"><property name="text"><string>-</string></property><property name="styleSheet"><string notr="true">font-weight: 600; color: #f8fafc;</string></property></widget>
-
-                      </item>
-
-
-
-                      <item row="1" column="0">
-
-                       <widget class="QLabel"><property name="text"><string>TCP Handshake Status:</string></property><property name="styleSheet"><string notr="true">color: #94a3b8;</string></property></widget>
-
-                      </item>
-
-                      <item row="1" column="1">
-
-                       <widget class="QLabel" name="lblDetTcpResult"><property name="text"><string>Not Tested</string></property><property name="styleSheet"><string notr="true">color: #38bdf8; font-weight: 600;</string></property></widget>
-
-                      </item>
-
-
-
-                      <item row="2" column="0">
-
-                       <widget class="QLabel"><property name="text"><string>Configured Method:</string></property><property name="styleSheet"><string notr="true">color: #94a3b8;</string></property></widget>
-
-                      </item>
-
-                      <item row="2" column="1">
-
-                       <widget class="QLabel" name="lblDetSpecType"><property name="text"><string>-</string></property><property name="styleSheet"><string notr="true">font-weight: 600; color: #f8fafc;</string></property></widget>
-
-                      </item>
-
-                     </layout>
-
-                    </item>
-
-                   </layout>
-
-                  </widget>
-
-                 </item>
-
-
-
-                 <!-- ICMP Diagnostics -->
-
-                 <item>
-
-                  <widget class="QFrame" name="framePingSection">
-
-                   <property name="styleSheet">
-
-                    <string notr="true">background-color: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 6px;</string>
-
-                   </property>
-
-                   <layout class="QVBoxLayout" name="layoutPingSection">
-
-                    <property name="spacing"><number>6</number></property>
-
-                    <property name="leftMargin"><number>12</number></property>
-
-                    <property name="topMargin"><number>8</number></property>
-
-                    <property name="rightMargin"><number>12</number></property>
-
-                    <property name="bottomMargin"><number>8</number></property>
-
-
-
-                    <item>
-
-                     <widget class="QLabel" name="lblPingSectionHeader">
-
-                      <property name="text"><string>ICMP Ping and Link Telemetry</string></property>
-
-                      <property name="styleSheet">
-
-                       <string notr="true">color: #34d399; font-weight: 700; font-size: 13px;</string>
-
-                      </property>
-
-                     </widget>
-
-                    </item>
-
-
-
-                    <item>
-
-                     <layout class="QFormLayout" name="formPingSpecs">
-
-                      <property name="horizontalSpacing"><number>14</number></property>
-
-                      <property name="verticalSpacing"><number>6</number></property>
-
-
-
-                      <item row="0" column="0">
-
-                       <widget class="QLabel"><property name="text"><string>Resolved IPv4 Address:</string></property><property name="styleSheet"><string notr="true">color: #94a3b8;</string></property></widget>
-
-                      </item>
-
-                      <item row="0" column="1">
-
-                       <widget class="QLabel" name="lblDetSpecResolved"><property name="text"><string>-</string></property><property name="wordWrap"><bool>true</bool></property><property name="styleSheet"><string notr="true">color: #38bdf8; font-weight: 600;</string></property></widget>
-
-                      </item>
-
-
-
-                      <item row="1" column="0">
-
-                       <widget class="QLabel"><property name="text"><string>ICMP Ping Status:</string></property><property name="styleSheet"><string notr="true">color: #94a3b8;</string></property></widget>
-
-                      </item>
-
-                      <item row="1" column="1">
-
-                       <widget class="QLabel" name="lblDetIcmpResult"><property name="text"><string>Not Tested</string></property><property name="styleSheet"><string notr="true">color: #34d399; font-weight: 600;</string></property></widget>
-
-                      </item>
-
-
-
-                      <item row="2" column="0">
-
-                       <widget class="QLabel"><property name="text"><string>Last Checked At:</string></property><property name="styleSheet"><string notr="true">color: #94a3b8;</string></property></widget>
-
-                      </item>
-
-                      <item row="2" column="1">
-
-                       <widget class="QLabel" name="lblDetSpecLast"><property name="text"><string>Never</string></property><property name="styleSheet"><string notr="true">color: #f8fafc;</string></property></widget>
-
-                      </item>
-
-
-
-                      <item row="3" column="0">
-
-                       <widget class="QLabel"><property name="text"><string>Protocol Overhead Delta:</string></property><property name="styleSheet"><string notr="true">color: #94a3b8;</string></property></widget>
-
-                      </item>
-
-                      <item row="3" column="1">
-
-                       <widget class="QLabel" name="lblDetDeltaAnalysis">
-
-                        <property name="wordWrap"><bool>true</bool></property>
-
-                        <property name="text"><string>Run verification to compute protocol delta</string></property>
-
-                        <property name="styleSheet"><string notr="true">color: #fbbf24; font-weight: 500;</string></property>
-
-                       </widget>
-
-                      </item>
-
-
-
-                      <item row="4" column="0">
-
-                       <widget class="QLabel"><property name="text"><string>Diagnostics / Notes:</string></property><property name="styleSheet"><string notr="true">color: #94a3b8;</string></property></widget>
-
-                      </item>
-
-                      <item row="4" column="1">
-
-                       <widget class="QLabel" name="lblDetSpecError">
-
-                        <property name="wordWrap"><bool>true</bool></property>
-
-                        <property name="text"><string>None - Ready</string></property>
-
-                        <property name="styleSheet"><string notr="true">color: #10b981; font-weight: 500;</string></property>
-
-                       </widget>
-
-                      </item>
-
-                     </layout>
-
-                    </item>
-
-                   </layout>
-
-                  </widget>
-
-                 </item>
-
-
-
-                 <item><spacer name="spSpecsBottom"><property name="orientation"><enum>Qt::Vertical</enum></property></spacer></item>
-
-                </layout>
-
-               </widget>
-
-              </item>
-
-              <!-- Hardware Telemetry -->
-
-             <item>
-
-              <widget class="QFrame" name="panelHardwareSlots">
-
-               <layout class="QVBoxLayout">
-
-                <item><widget class="QLabel" name="lblSlotHeader"><property name="text"><string>Hardware &amp; System Telemetry</string></property></widget></item>
-
-                <item><widget class="QLabel" name="lblSlotDesc"><property name="text"><string>Remote agent telemetry and hardware metrics.</string></property></widget></item>
-
-
-
-                <item><widget class="QLabel"><property name="text"><string>CPU Load:</string></property><property name="styleSheet"><string notr="true">margin-top: 6px;</string></property></widget></item>
-
-                <item><widget class="QProgressBar" name="barSlotCPU"><property name="value"><number>0</number></property></widget></item>
-
-
-
-                <item><widget class="QLabel"><property name="text"><string>RAM Memory:</string></property><property name="styleSheet"><string notr="true">margin-top: 6px;</string></property></widget></item>
-
-                <item><widget class="QProgressBar" name="barSlotMemory"><property name="value"><number>0</number></property></widget></item>
-
-
-
-                <item><widget class="QLabel"><property name="text"><string>Disk Storage:</string></property><property name="styleSheet"><string notr="true">margin-top: 6px;</string></property></widget></item>
-
-                <item><widget class="QProgressBar" name="barSlotDisk"><property name="value"><number>0</number></property></widget></item>
-
-
-
-                <item><spacer name="spSlotsBottom"><property name="orientation"><enum>Qt::Vertical</enum></property></spacer></item>
-
-               </layout>
-
-              </widget>
-
-             </item>
-
-
-
+            <layout class="QHBoxLayout" name="detMetaRow">
+             <item><widget class="QLabel" name="lblDetSpecLast"><property name="text"><string>Last check: Never</string></property><property name="styleSheet"><string notr="true">color: #94a3b8; font-size: 11px;</string></property></widget></item>
+             <item><spacer name="spDetMeta"><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+             <item><widget class="QLabel" name="lblDetSpecError"><property name="text"><string>None - System Operating Normally</string></property><property name="styleSheet"><string notr="true">color: #10b981; font-weight: 500; font-size: 11px;</string></property></widget></item>
             </layout>
-
            </item>
 
+           <!-- Domain-Aligned Tabs -->
+           <item>
+            <widget class="QTabWidget" name="tabsServerInspector">
+             <property name="currentIndex"><number>0</number></property>
+
+             <!-- TAB 1: Network Link (L3 / L4) -->
+             <widget class="QWidget" name="tabNetworkLink">
+              <attribute name="title"><string>Network Link</string></attribute>
+              <layout class="QHBoxLayout" name="layTabNetworkLink">
+               <property name="spacing"><number>14</number></property>
+               <property name="leftMargin"><number>10</number></property>
+               <property name="topMargin"><number>10</number></property>
+               <property name="rightMargin"><number>10</number></property>
+               <property name="bottomMargin"><number>10</number></property>
+
+               <!-- Ping Box -->
+               <item>
+                <widget class="QFrame" name="boxInspPing">
+                 <layout class="QVBoxLayout" name="layBoxPing">
+                  <property name="leftMargin"><number>16</number></property>
+                  <property name="topMargin"><number>14</number></property>
+                  <property name="rightMargin"><number>16</number></property>
+                  <property name="bottomMargin"><number>14</number></property>
+                  <property name="spacing"><number>10</number></property>
+                  <item>
+                   <layout class="QHBoxLayout">
+                    <item><widget class="QLabel" name="lblPingTitle"><property name="text"><string>ICMP Echo &amp; Link Speed</string></property><property name="styleSheet"><string notr="true">font-weight: 700; font-size: 13px; color: #38bdf8;</string></property></widget></item>
+                    <item><spacer><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+                    <item><widget class="QLabel" name="lblPingLossRate"><property name="text"><string>Drop: 0%</string></property><property name="styleSheet"><string notr="true">color: #10b981; font-weight: 600; font-size: 11px;</string></property></widget></item>
+                    <item><widget class="QPushButton" name="btnTestNetworkLink"><property name="text"><string>Test Network Link</string></property><property name="styleSheet"><string notr="true">background-color: #1e293b; color: #38bdf8; border: 1px solid #38bdf8; border-radius: 6px; padding: 3px 10px; font-size: 11px; font-weight: 600;</string></property></widget></item>
+                   </layout>
+                  </item>
+                  <item>
+                   <layout class="QHBoxLayout">
+                    <item><widget class="QLabel" name="lblValDetIcmpLat"><property name="text"><string>Last: -- ms</string></property><property name="styleSheet"><string notr="true">color: #f1f5f9; font-weight: 600;</string></property></widget></item>
+                    <item><spacer><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+                    <item><widget class="QLabel" name="lblDetSpecResolved"><property name="text"><string>Resolved: --</string></property><property name="styleSheet"><string notr="true">color: #94a3b8; font-size: 11px;</string></property></widget></item>
+                   </layout>
+                  </item>
+                  <item>
+                   <layout class="QVBoxLayout" name="layoutPingGraph"/>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+
+               <!-- TCP Box -->
+               <item>
+                <widget class="QFrame" name="boxInspTcp">
+                 <layout class="QVBoxLayout" name="layBoxTcp">
+                  <property name="leftMargin"><number>16</number></property>
+                  <property name="topMargin"><number>14</number></property>
+                  <property name="rightMargin"><number>16</number></property>
+                  <property name="bottomMargin"><number>14</number></property>
+                  <property name="spacing"><number>10</number></property>
+                  <item>
+                   <layout class="QHBoxLayout">
+                    <item><widget class="QLabel" name="lblTcpTitle"><property name="text"><string>TCP Service &amp; Port Handshake</string></property><property name="styleSheet"><string notr="true">font-weight: 700; font-size: 13px; color: #60a5fa;</string></property></widget></item>
+                    <item><spacer><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+                    <item><widget class="QLabel" name="lblDetSpecPort"><property name="text"><string>Port: --</string></property><property name="styleSheet"><string notr="true">color: #94a3b8; font-size: 11px;</string></property></widget></item>
+                   </layout>
+                  </item>
+                  <item>
+                   <layout class="QHBoxLayout">
+                    <item><widget class="QLabel" name="lblValDetTcpLat"><property name="text"><string>Handshake: -- ms</string></property><property name="styleSheet"><string notr="true">color: #f1f5f9; font-weight: 600;</string></property></widget></item>
+                    <item><spacer><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+                    <item><widget class="QLabel" name="lblDetTcpResult"><property name="text"><string>Status: STANDBY</string></property><property name="styleSheet"><string notr="true">color: #94a3b8; font-weight: 700;</string></property></widget></item>
+                   </layout>
+                  </item>
+                  <item>
+                   <layout class="QVBoxLayout" name="layoutTcpGraph"/>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+
+             <!-- TAB 2: Web & Services (L7 & DNS) -->
+             <widget class="QWidget" name="tabWebServices">
+              <attribute name="title"><string>Web and Services</string></attribute>
+              <layout class="QHBoxLayout" name="layTabWebServices">
+               <property name="spacing"><number>14</number></property>
+               <property name="leftMargin"><number>10</number></property>
+               <property name="topMargin"><number>10</number></property>
+               <property name="rightMargin"><number>10</number></property>
+               <property name="bottomMargin"><number>10</number></property>
+
+               <!-- HTTP Box -->
+               <item>
+                <widget class="QFrame" name="boxInspHttp">
+                 <layout class="QVBoxLayout" name="layBoxHttp">
+                  <property name="leftMargin"><number>16</number></property>
+                  <property name="topMargin"><number>14</number></property>
+                  <property name="rightMargin"><number>16</number></property>
+                  <property name="bottomMargin"><number>14</number></property>
+                  <property name="spacing"><number>10</number></property>
+                  <item>
+                   <layout class="QHBoxLayout">
+                    <item><widget class="QLabel" name="lblHttpTitle"><property name="text"><string>HTTP / HTTPS Response Time</string></property><property name="styleSheet"><string notr="true">font-weight: 700; font-size: 13px; color: #34d399;</string></property></widget></item>
+                    <item><spacer><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+                    <item><widget class="QLabel" name="lblHttpStatus"><property name="text"><string>Status: --</string></property><property name="styleSheet"><string notr="true">color: #94a3b8; font-weight: 700;</string></property></widget></item>
+                    <item><widget class="QPushButton" name="btnTestWebServices"><property name="text"><string>Test Web Services</string></property><property name="styleSheet"><string notr="true">background-color: #1e293b; color: #a855f7; border: 1px solid #a855f7; border-radius: 6px; padding: 3px 10px; font-size: 11px; font-weight: 600;</string></property></widget></item>
+                   </layout>
+                  </item>
+                  <item>
+                   <layout class="QHBoxLayout">
+                    <item><widget class="QLabel" name="lblValDetHttpLat"><property name="text"><string>Duration: -- ms</string></property><property name="styleSheet"><string notr="true">color: #f1f5f9; font-weight: 600;</string></property></widget></item>
+                    <item><spacer><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+                    <item><widget class="QLabel" name="lblHttpUrl"><property name="text"><string>URL: --</string></property><property name="styleSheet"><string notr="true">color: #94a3b8; font-size: 11px;</string></property></widget></item>
+                   </layout>
+                  </item>
+                  <item>
+                   <layout class="QVBoxLayout" name="layoutHttpGraph"/>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+
+               <!-- SSL & DNS Box -->
+               <item>
+                <widget class="QFrame" name="boxInspSslDns">
+                 <layout class="QVBoxLayout" name="layBoxSslDns">
+                  <property name="leftMargin"><number>16</number></property>
+                  <property name="topMargin"><number>14</number></property>
+                  <property name="rightMargin"><number>16</number></property>
+                  <property name="bottomMargin"><number>14</number></property>
+                  <property name="spacing"><number>10</number></property>
+                  <item>
+                   <widget class="QLabel" name="lblSslTitle"><property name="text"><string>SSL / TLS Certificate</string></property><property name="styleSheet"><string notr="true">font-weight: 700; font-size: 13px; color: #a78bfa;</string></property></widget>
+                  </item>
+                  <item><widget class="QLabel" name="lblSslIssuer"><property name="text"><string>Issuer: --</string></property><property name="styleSheet"><string notr="true">color: #cbd5e1;</string></property></widget></item>
+                  <item><widget class="QLabel" name="lblSslExpiry"><property name="text"><string>Expiration: --</string></property><property name="styleSheet"><string notr="true">color: #cbd5e1;</string></property></widget></item>
+                  <item><widget class="QLabel" name="lblDnsTitle"><property name="text"><string>DNS Resolution Integrity</string></property><property name="styleSheet"><string notr="true">font-weight: 700; font-size: 13px; color: #38bdf8; margin-top: 10px;</string></property></widget></item>
+                  <item><widget class="QLabel" name="lblDnsPrimary"><property name="text"><string>System DNS: -- ms</string></property><property name="styleSheet"><string notr="true">color: #cbd5e1;</string></property></widget></item>
+                  <item><widget class="QLabel" name="lblDnsBenchmark"><property name="text"><string>Benchmark (1.1.1.1): -- ms</string></property><property name="styleSheet"><string notr="true">color: #cbd5e1;</string></property></widget></item>
+                  <item><widget class="QLabel" name="lblDnsDelta"><property name="text"><string>Delta: -- ms</string></property><property name="styleSheet"><string notr="true">color: #cbd5e1;</string></property></widget></item>
+                  <item><spacer><property name="orientation"><enum>Qt::Vertical</enum></property></spacer></item>
+                 </layout>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+
+             <!-- TAB 3: Host Hardware (Host Telemetry) -->
+             <widget class="QWidget" name="tabHostHardware">
+              <attribute name="title"><string>Host Hardware</string></attribute>
+              <layout class="QHBoxLayout" name="layTabHostHardware">
+               <property name="spacing"><number>14</number></property>
+               <property name="leftMargin"><number>10</number></property>
+               <property name="topMargin"><number>10</number></property>
+               <property name="rightMargin"><number>10</number></property>
+               <property name="bottomMargin"><number>10</number></property>
+
+               <!-- SNMP History Graph Box -->
+               <item>
+                <widget class="QFrame" name="boxInspSnmp">
+                 <layout class="QVBoxLayout" name="layBoxSnmp">
+                  <property name="leftMargin"><number>16</number></property>
+                  <property name="topMargin"><number>14</number></property>
+                  <property name="rightMargin"><number>16</number></property>
+                  <property name="bottomMargin"><number>14</number></property>
+                  <property name="spacing"><number>10</number></property>
+                  <item>
+                   <layout class="QHBoxLayout">
+                    <item><widget class="QLabel" name="lblSnmpTitle"><property name="text"><string>Host Resource Utilization History</string></property><property name="styleSheet"><string notr="true">font-weight: 700; font-size: 13px; color: #f59e0b;</string></property></widget></item>
+                    <item><spacer><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+                    <item><widget class="QLabel" name="lblSnmpSysUptime"><property name="text"><string>Uptime: --</string></property><property name="styleSheet"><string notr="true">color: #94a3b8; font-size: 11px;</string></property></widget></item>
+                    <item><widget class="QPushButton" name="btnTestHardware"><property name="text"><string>Test Hardware</string></property><property name="styleSheet"><string notr="true">background-color: #1e293b; color: #10b981; border: 1px solid #10b981; border-radius: 6px; padding: 3px 10px; font-size: 11px; font-weight: 600;</string></property></widget></item>
+                   </layout>
+                  </item>
+                  <item><widget class="QLabel" name="lblSnmpSysDescr"><property name="text"><string>System: --</string></property><property name="styleSheet"><string notr="true">color: #94a3b8; font-size: 11px;</string></property></widget></item>
+                  <item>
+                   <layout class="QVBoxLayout" name="layoutSnmpGraph"/>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+
+               <!-- Live Hardware Gauges Box -->
+               <item>
+                <widget class="QFrame" name="boxInspGauges">
+                 <layout class="QVBoxLayout" name="layBoxGauges">
+                  <property name="leftMargin"><number>16</number></property>
+                  <property name="topMargin"><number>14</number></property>
+                  <property name="rightMargin"><number>16</number></property>
+                  <property name="bottomMargin"><number>14</number></property>
+                  <property name="spacing"><number>10</number></property>
+                  <item><widget class="QLabel" name="lblGaugesTitle"><property name="text"><string>Live Hardware Gauges</string></property><property name="styleSheet"><string notr="true">font-weight: 700; font-size: 13px; color: #f1f5f9;</string></property></widget></item>
+
+                  <!-- CPU Gauge -->
+                  <item>
+                   <layout class="QHBoxLayout">
+                    <item><widget class="QLabel" name="lblTitleSlotCPU"><property name="text"><string>CPU Load</string></property><property name="styleSheet"><string notr="true">color: #cbd5e1; font-weight: 600;</string></property></widget></item>
+                    <item><spacer><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+                    <item><widget class="QLabel" name="lblValSlotCPU"><property name="text"><string>0%</string></property><property name="styleSheet"><string notr="true">color: #f59e0b; font-weight: 700;</string></property></widget></item>
+                   </layout>
+                  </item>
+                  <item>
+                   <widget class="QProgressBar" name="barSlotCPU">
+                    <property name="maximum"><number>100</number></property>
+                    <property name="value"><number>0</number></property>
+                    <property name="styleSheet"><string notr="true">QProgressBar { border: 1px solid #1e293b; border-radius: 4px; background: #0f172a; height: 10px; text-align: center; } QProgressBar::chunk { background-color: #f59e0b; border-radius: 4px; }</string></property>
+                   </widget>
+                  </item>
+
+                  <!-- RAM Gauge -->
+                  <item>
+                   <layout class="QHBoxLayout">
+                    <item><widget class="QLabel" name="lblTitleSlotMemory"><property name="text"><string>RAM Memory</string></property><property name="styleSheet"><string notr="true">color: #cbd5e1; font-weight: 600;</string></property></widget></item>
+                    <item><spacer><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+                    <item><widget class="QLabel" name="lblValSlotMemory"><property name="text"><string>0%</string></property><property name="styleSheet"><string notr="true">color: #38bdf8; font-weight: 700;</string></property></widget></item>
+                   </layout>
+                  </item>
+                  <item>
+                   <widget class="QProgressBar" name="barSlotMemory">
+                    <property name="maximum"><number>100</number></property>
+                    <property name="value"><number>0</number></property>
+                    <property name="styleSheet"><string notr="true">QProgressBar { border: 1px solid #1e293b; border-radius: 4px; background: #0f172a; height: 10px; text-align: center; } QProgressBar::chunk { background-color: #38bdf8; border-radius: 4px; }</string></property>
+                   </widget>
+                  </item>
+
+                  <!-- Disk Gauge -->
+                  <item>
+                   <layout class="QHBoxLayout">
+                    <item><widget class="QLabel" name="lblTitleSlotDisk"><property name="text"><string>Disk Storage</string></property><property name="styleSheet"><string notr="true">color: #cbd5e1; font-weight: 600;</string></property></widget></item>
+                    <item><spacer><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+                    <item><widget class="QLabel" name="lblValSlotDisk"><property name="text"><string>0%</string></property><property name="styleSheet"><string notr="true">color: #10b981; font-weight: 700;</string></property></widget></item>
+                   </layout>
+                  </item>
+                  <item>
+                   <widget class="QProgressBar" name="barSlotDisk">
+                    <property name="maximum"><number>100</number></property>
+                    <property name="value"><number>0</number></property>
+                    <property name="styleSheet"><string notr="true">QProgressBar { border: 1px solid #1e293b; border-radius: 4px; background: #0f172a; height: 10px; text-align: center; } QProgressBar::chunk { background-color: #10b981; border-radius: 4px; }</string></property>
+                   </widget>
+                  </item>
+
+                  <item><spacer><property name="orientation"><enum>Qt::Vertical</enum></property></spacer></item>
+                 </layout>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+
+             <!-- TAB 4: Traffic & Security (Wireshark Anomaly) -->
+             <widget class="QWidget" name="tabTrafficSecurity">
+              <attribute name="title"><string>Traffic and Security</string></attribute>
+              <layout class="QVBoxLayout" name="layTabTrafficSecurity">
+               <property name="spacing"><number>10</number></property>
+               <property name="leftMargin"><number>10</number></property>
+               <property name="topMargin"><number>10</number></property>
+               <property name="rightMargin"><number>10</number></property>
+               <property name="bottomMargin"><number>10</number></property>
+
+               <!-- Dependency Alert Banner -->
+               <item>
+                <widget class="QFrame" name="bannerWireshark">
+                 <property name="styleSheet"><string notr="true">background-color: #451a03; border: 1px solid #b45309; border-radius: 8px; padding: 10px;</string></property>
+                 <layout class="QHBoxLayout" name="layBannerWireshark">
+                  <item><widget class="QLabel" name="lblWiresharkStatus"><property name="text"><string>Wireshark (tshark.exe) status: scanning...</string></property><property name="styleSheet"><string notr="true">color: #fde68a; font-weight: 600;</string></property></widget></item>
+                  <item><spacer><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+                  <item><widget class="QPushButton" name="btnRecheckWireshark"><property name="text"><string>Re-check Wireshark</string></property><property name="styleSheet"><string notr="true">background-color: #d97706; color: #ffffff; font-weight: 700; padding: 6px 14px; border-radius: 6px;</string></property></widget></item>
+                 </layout>
+                </widget>
+               </item>
+
+               <!-- Security & Anomaly Box -->
+               <item>
+                <widget class="QFrame" name="boxInspTraffic">
+                 <layout class="QVBoxLayout" name="layBoxTraffic">
+                  <property name="leftMargin"><number>16</number></property>
+                  <property name="topMargin"><number>14</number></property>
+                  <property name="rightMargin"><number>16</number></property>
+                  <property name="bottomMargin"><number>14</number></property>
+                  <property name="spacing"><number>10</number></property>
+                  <item>
+                   <layout class="QHBoxLayout">
+                    <item><widget class="QLabel" name="lblThreatBadge"><property name="text"><string>SECURITY: NORMAL</string></property><property name="styleSheet"><string notr="true">background-color: #064e3b; color: #34d399; font-weight: 700; padding: 4px 12px; border-radius: 6px;</string></property></widget></item>
+                    <item><widget class="QPushButton" name="btnTestTraffic"><property name="text"><string>Test Traffic</string></property><property name="styleSheet"><string notr="true">background-color: #1e293b; color: #f59e0b; border: 1px solid #f59e0b; border-radius: 6px; padding: 3px 10px; font-size: 11px; font-weight: 600;</string></property></widget></item>
+                    <item><spacer><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+                    <item><widget class="QLabel" name="lblTrafficPPS"><property name="text"><string>0 PPS (Peak: 0 PPS)</string></property><property name="styleSheet"><string notr="true">color: #f43f5e; font-weight: 700; font-size: 13px;</string></property></widget></item>
+                   </layout>
+                  </item>
+                  <item><widget class="QLabel" name="lblThreatDetails"><property name="text"><string>Heuristics: Normal packet flow. No SYN flood or port sweep detected.</string></property><property name="styleSheet"><string notr="true">color: #94a3b8; font-size: 12px;</string></property></widget></item>
+                  <item>
+                   <layout class="QVBoxLayout" name="layoutTrafficGraph"/>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </widget>
+           </item>
           </layout>
-
          </widget>
-
-
 
          <!-- Page 3: Audit Logs -->
 
@@ -1963,138 +1854,728 @@ QMessageBox QPushButton:pressed {
 
 
          <!-- Page 5: Server Configuration Form -->
-
          <widget class="QWidget" name="pageServerForm">
-
           <layout class="QVBoxLayout" name="p5_layout">
-
-           <property name="spacing"><number>18</number></property>
-
-           <property name="leftMargin"><number>32</number></property>
-
-           <property name="topMargin"><number>28</number></property>
-
-           <property name="rightMargin"><number>32</number></property>
-
-           <property name="bottomMargin"><number>28</number></property>
-
-
-
-           <item><widget class="QLabel" name="lblFormTitle"><property name="text"><string>Server Details</string></property></widget></item>
-
-            
-
-           <item><widget class="QLabel" name="lblFormSubtitle"><property name="text"><string>Set endpoint address, check protocol, and service ports.</string></property></widget></item>
-
-
-
+           <property name="spacing"><number>14</number></property>
+           <property name="leftMargin"><number>24</number></property>
+           <property name="topMargin"><number>20</number></property>
+           <property name="rightMargin"><number>24</number></property>
+           <property name="bottomMargin"><number>20</number></property>
            <item>
-
-            <widget class="QFrame" name="frameFormCard">
-
-             <property name="maximumSize"><size><width>750</width><height>16777215</height></size></property>
-
-
-
-             <layout class="QVBoxLayout">
-
-              <property name="spacing"><number>16</number></property>
-
-              <property name="leftMargin"><number>24</number></property>
-
-              <property name="topMargin"><number>20</number></property>
-
-              <property name="rightMargin"><number>24</number></property>
-
-              <property name="bottomMargin"><number>20</number></property>
-
-
-
-              <item><widget class="QLabel"><property name="text"><string>Server Name:</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
-
-              <item><widget class="QLineEdit" name="txtFormName"><property name="placeholderText"><string>e.g., Primary Web Gateway, Database Cluster...</string></property></widget></item>
-
-
-
-              <item><widget class="QLabel"><property name="text"><string>Host Address (Domain or IP):</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
-
-              <item><widget class="QLineEdit" name="txtFormHost"><property name="placeholderText"><string>e.g., google.com or 192.168.1.1</string></property></widget></item>
-
-
-
-              <item>
-
-               <layout class="QHBoxLayout">
-
-                <property name="spacing"><number>14</number></property>
-
-                <item>
-
+            <widget class="QScrollArea" name="scrollServerForm">
+             <property name="widgetResizable"><bool>true</bool></property>
+             <property name="frameShape"><enum>QFrame::NoFrame</enum></property>
+             
+             <widget class="QWidget" name="scrollServerFormContent">
+              <property name="geometry"><rect><x>0</x><y>0</y><width>840</width><height>860</height></rect></property>
+              <layout class="QVBoxLayout" name="scrollFormLayout">
+               <property name="spacing"><number>14</number></property>
+               <property name="leftMargin"><number>0</number></property>
+               <property name="topMargin"><number>0</number></property>
+               <property name="rightMargin"><number>12</number></property>
+               <property name="bottomMargin"><number>12</number></property>
+               <item><widget class="QLabel" name="lblFormTitle"><property name="text"><string>Server Details</string></property></widget></item>
+               <item><widget class="QLabel" name="lblFormSubtitle"><property name="text"><string>Set target host, primary service port, and configure verification checks in the tabs below.</string></property></widget></item>
+               <item>
+                <widget class="QFrame" name="frameFormCard">
+                 <property name="maximumSize"><size><width>860</width><height>16777215</height></size></property>
                  <layout class="QVBoxLayout">
+                  <property name="spacing"><number>14</number></property>
+                  <property name="leftMargin"><number>24</number></property>
+                  <property name="topMargin"><number>20</number></property>
+                  <property name="rightMargin"><number>24</number></property>
+                  <property name="bottomMargin"><number>20</number></property>
 
-                  <item><widget class="QLabel"><property name="text"><string>Check Protocol:</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                  <!-- 1. GENERAL IDENTITY -->
+                  <item><widget class="QLabel"><property name="text"><string>Server Name:</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                  <item><widget class="QLineEdit" name="txtFormName"><property name="placeholderText"><string>e.g., Primary Web Gateway, Database Cluster...</string></property></widget></item>
 
-                  <item><widget class="QComboBox" name="cmbFormType"><item><property name="text"><string>TCP</string></property></item><item><property name="text"><string>PING</string></property></item></widget></item>
+                  <item><widget class="QLabel"><property name="text"><string>Host Address (Domain or IP):</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                  <item><widget class="QLineEdit" name="txtFormHost"><property name="placeholderText"><string>e.g., google.com or 192.168.1.1</string></property></widget></item>
 
+                  <item>
+                   <layout class="QHBoxLayout">
+                    <property name="spacing"><number>14</number></property>
+                    <item>
+                     <layout class="QVBoxLayout">
+                      <item><widget class="QLabel"><property name="text"><string>Primary Protocol:</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                      <item><widget class="QComboBox" name="cmbFormType"><item><property name="text"><string>TCP</string></property></item><item><property name="text"><string>PING</string></property></item><item><property name="text"><string>HTTP</string></property></item><item><property name="text"><string>HTTPS</string></property></item><item><property name="text"><string>DNS</string></property></item><item><property name="text"><string>SNMP</string></property></item><item><property name="text"><string>TRAFFIC</string></property></item></widget></item>
+                     </layout>
+                    </item>
+                    <item>
+                     <layout class="QVBoxLayout">
+                      <item><widget class="QLabel"><property name="text"><string>Default Port (1 - 65535):</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                      <item><widget class="QSpinBox" name="spnFormPort"><property name="minimum"><number>1</number></property><property name="maximum"><number>65535</number></property><property name="value"><number>80</number></property></widget></item>
+                     </layout>
+                    </item>
+                   </layout>
+                  </item>
+
+                  <item><widget class="QLabel" name="lblFormPortHint"><property name="text"><string>Default port for TCP service is 80 (HTTP) or custom port.</string></property><property name="styleSheet"><string notr="true">color: #64748b; font-size: 11px;</string></property></widget></item>
+
+                  <!-- 2. MODULAR PROTOCOL CHECK TABS (EACH WITH ITS OWN PILL TOGGLE & BLUR OVERLAY) -->
+                  <item><widget class="QLabel" name="lblFormProtocolConfigTitle"><property name="text"><string>Modular Verification Checks:</string></property><property name="styleSheet"><string notr="true">font-weight: 600; color: #f8fafc; margin-top: 6px;</string></property></widget></item>
+                  <item>
+                   <widget class="QTabWidget" name="tabsFormChecks">
+                    <property name="currentIndex"><number>1</number></property>
+
+                    <!-- TAB 0: PING -->
+                    <widget class="QWidget" name="tabFormPing">
+                     <attribute name="title"><string>Ping (ICMP)</string></attribute>
+                     <layout class="QVBoxLayout" name="layoutTabPing">
+                      <property name="spacing"><number>12</number></property>
+                      <property name="leftMargin"><number>16</number></property>
+                      <property name="topMargin"><number>14</number></property>
+                      <property name="rightMargin"><number>16</number></property>
+                      <property name="bottomMargin"><number>14</number></property>
+                      
+                      <!-- HEADER BAR WITH PILL TOGGLE -->
+                      <item>
+                       <widget class="QFrame" name="headerBarPing">
+                        <property name="styleSheet"><string notr="true">background-color: #131d33; border: 1px solid #1e293b; border-radius: 8px; padding: 8px 14px;</string></property>
+                        <layout class="QHBoxLayout">
+                         <item>
+                          <layout class="QVBoxLayout">
+                           <property name="spacing"><number>2</number></property>
+                           <item><widget class="QLabel"><property name="text"><string>ICMP Ping Verification</string></property><property name="styleSheet"><string notr="true">font-size: 13px; font-weight: 700; color: #f8fafc;</string></property></widget></item>
+                           <item><widget class="QLabel"><property name="text"><string>Measures round-trip latency (RTT), packet drop rate %, and jitter.</string></property><property name="styleSheet"><string notr="true">font-size: 11px; color: #94a3b8;</string></property></widget></item>
+                          </layout>
+                         </item>
+                         <item><spacer><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+                         <item>
+                          <widget class="QCheckBox" name="chkPing">
+                           <property name="text"><string>○ DISABLED</string></property>
+                           <property name="cursor"><cursorShape>PointingHandCursor</cursorShape></property>
+                           <property name="styleSheet"><string notr="true">QCheckBox { font-size: 11px; font-weight: 700; color: #64748b; background-color: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 6px 14px; } QCheckBox:hover { color: #94a3b8; background-color: #1e293b; border: 1px solid #475569; } QCheckBox::indicator { width: 0px; height: 0px; }</string></property>
+                          </widget>
+                         </item>
+                        </layout>
+                       </widget>
+                      </item>
+
+                      <!-- DISABLED OVERLAY BANNER -->
+                      <item>
+                       <widget class="QFrame" name="bannerDisabledPing">
+                        <property name="styleSheet"><string notr="true">background-color: rgba(30, 41, 59, 0.7); border: 1px dashed #475569; border-radius: 8px; padding: 10px 14px;</string></property>
+                        <layout class="QHBoxLayout">
+                         <item><widget class="QLabel"><property name="text"><string>🔒  Ping check is currently turned off for this server. Click the toggle above to activate and configure.</string></property><property name="styleSheet"><string notr="true">color: #94a3b8; font-size: 12px; font-weight: 500;</string></property></widget></item>
+                        </layout>
+                       </widget>
+                      </item>
+
+                      <!-- CONFIG INPUTS CONTAINER -->
+                      <item>
+                       <widget class="QWidget" name="containerPing">
+                        <layout class="QVBoxLayout">
+                         <property name="leftMargin"><number>0</number></property>
+                         <property name="rightMargin"><number>0</number></property>
+                         <property name="topMargin"><number>4</number></property>
+                         <property name="bottomMargin"><number>0</number></property>
+                         <property name="spacing"><number>12</number></property>
+                         <item>
+                          <layout class="QHBoxLayout">
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>Echo Request Count:</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QSpinBox" name="spnFormPingCount"><property name="minimum"><number>1</number></property><property name="maximum"><number>20</number></property><property name="value"><number>4</number></property></widget></item>
+                            </layout>
+                           </item>
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>Timeout per Packet (ms):</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QSpinBox" name="spnFormPingTimeout"><property name="minimum"><number>100</number></property><property name="maximum"><number>10000</number></property><property name="singleStep"><number>100</number></property><property name="value"><number>1000</number></property></widget></item>
+                            </layout>
+                           </item>
+                          </layout>
+                         </item>
+                        </layout>
+                       </widget>
+                      </item>
+                      <item><spacer name="spTabPing"><property name="orientation"><enum>Qt::Vertical</enum></property></spacer></item>
+                     </layout>
+                    </widget>
+
+                    <!-- TAB 1: TCP -->
+                    <widget class="QWidget" name="tabFormTcp">
+                     <attribute name="title"><string>TCP Ports</string></attribute>
+                     <layout class="QVBoxLayout" name="layoutTabTcp">
+                      <property name="spacing"><number>12</number></property>
+                      <property name="leftMargin"><number>16</number></property>
+                      <property name="topMargin"><number>14</number></property>
+                      <property name="rightMargin"><number>16</number></property>
+                      <property name="bottomMargin"><number>14</number></property>
+
+                      <!-- HEADER BAR WITH PILL TOGGLE -->
+                      <item>
+                       <widget class="QFrame" name="headerBarTcp">
+                        <property name="styleSheet"><string notr="true">background-color: #131d33; border: 1px solid #1e293b; border-radius: 8px; padding: 8px 14px;</string></property>
+                        <layout class="QHBoxLayout">
+                         <item>
+                          <layout class="QVBoxLayout">
+                           <property name="spacing"><number>2</number></property>
+                           <item><widget class="QLabel"><property name="text"><string>TCP Port Connection Verification</string></property><property name="styleSheet"><string notr="true">font-size: 13px; font-weight: 700; color: #f8fafc;</string></property></widget></item>
+                           <item><widget class="QLabel"><property name="text"><string>Tests TCP three-way handshake across single or multiple comma-separated service ports.</string></property><property name="styleSheet"><string notr="true">font-size: 11px; color: #94a3b8;</string></property></widget></item>
+                          </layout>
+                         </item>
+                         <item><spacer><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+                         <item>
+                          <widget class="QCheckBox" name="chkTcp">
+                           <property name="checked"><bool>true</bool></property>
+                           <property name="text"><string>● ACTIVE</string></property>
+                           <property name="cursor"><cursorShape>PointingHandCursor</cursorShape></property>
+                           <property name="styleSheet"><string notr="true">QCheckBox { font-size: 11px; font-weight: 700; color: #10b981; background-color: rgba(16, 185, 129, 0.15); border: 1px solid #059669; border-radius: 6px; padding: 6px 14px; } QCheckBox:hover { background-color: rgba(16, 185, 129, 0.25); border: 1px solid #10b981; } QCheckBox::indicator { width: 0px; height: 0px; }</string></property>
+                          </widget>
+                         </item>
+                        </layout>
+                       </widget>
+                      </item>
+
+                      <!-- DISABLED OVERLAY BANNER -->
+                      <item>
+                       <widget class="QFrame" name="bannerDisabledTcp">
+                        <property name="styleSheet"><string notr="true">background-color: rgba(30, 41, 59, 0.7); border: 1px dashed #475569; border-radius: 8px; padding: 10px 14px;</string></property>
+                        <layout class="QHBoxLayout">
+                         <item><widget class="QLabel"><property name="text"><string>🔒  TCP check is currently turned off for this server. Click the toggle above to activate and configure.</string></property><property name="styleSheet"><string notr="true">color: #94a3b8; font-size: 12px; font-weight: 500;</string></property></widget></item>
+                        </layout>
+                       </widget>
+                      </item>
+
+                      <!-- CONFIG INPUTS CONTAINER -->
+                      <item>
+                       <widget class="QWidget" name="containerTcp">
+                        <layout class="QVBoxLayout">
+                         <property name="leftMargin"><number>0</number></property>
+                         <property name="rightMargin"><number>0</number></property>
+                         <property name="topMargin"><number>4</number></property>
+                         <property name="bottomMargin"><number>0</number></property>
+                         <property name="spacing"><number>12</number></property>
+                         <item>
+                          <layout class="QHBoxLayout">
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>Target Port(s) (comma-separated):</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QLineEdit" name="txtFormTcpPorts"><property name="placeholderText"><string>e.g. 80, 443, 22 (or leave blank to use primary port)</string></property></widget></item>
+                            </layout>
+                           </item>
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>Connect Timeout (sec):</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QDoubleSpinBox" name="spnFormTcpTimeout"><property name="minimum"><double>0.5</double></property><property name="maximum"><double>30.0</double></property><property name="singleStep"><double>0.5</double></property><property name="value"><double>3.0</double></property></widget></item>
+                            </layout>
+                           </item>
+                          </layout>
+                         </item>
+                        </layout>
+                       </widget>
+                      </item>
+                      <item><spacer name="spTabTcp"><property name="orientation"><enum>Qt::Vertical</enum></property></spacer></item>
+                     </layout>
+                    </widget>
+
+                    <!-- TAB 2: HTTP -->
+                    <widget class="QWidget" name="tabFormHttp">
+                     <attribute name="title"><string>HTTP Web</string></attribute>
+                     <layout class="QVBoxLayout" name="layoutTabHttp">
+                      <property name="spacing"><number>12</number></property>
+                      <property name="leftMargin"><number>16</number></property>
+                      <property name="topMargin"><number>14</number></property>
+                      <property name="rightMargin"><number>16</number></property>
+                      <property name="bottomMargin"><number>14</number></property>
+
+                      <!-- HEADER BAR WITH PILL TOGGLE -->
+                      <item>
+                       <widget class="QFrame" name="headerBarHttp">
+                        <property name="styleSheet"><string notr="true">background-color: #131d33; border: 1px solid #1e293b; border-radius: 8px; padding: 8px 14px;</string></property>
+                        <layout class="QHBoxLayout">
+                         <item>
+                          <layout class="QVBoxLayout">
+                           <property name="spacing"><number>2</number></property>
+                           <item><widget class="QLabel"><property name="text"><string>HTTP Web Endpoint Verification</string></property><property name="styleSheet"><string notr="true">font-size: 13px; font-weight: 700; color: #f8fafc;</string></property></widget></item>
+                           <item><widget class="QLabel"><property name="text"><string>Validates plain HTTP endpoint availability, HTTP status codes, and redirection chains.</string></property><property name="styleSheet"><string notr="true">font-size: 11px; color: #94a3b8;</string></property></widget></item>
+                          </layout>
+                         </item>
+                         <item><spacer><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+                         <item>
+                          <widget class="QCheckBox" name="chkHttp">
+                           <property name="text"><string>○ DISABLED</string></property>
+                           <property name="cursor"><cursorShape>PointingHandCursor</cursorShape></property>
+                           <property name="styleSheet"><string notr="true">QCheckBox { font-size: 11px; font-weight: 700; color: #64748b; background-color: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 6px 14px; } QCheckBox:hover { color: #94a3b8; background-color: #1e293b; border: 1px solid #475569; } QCheckBox::indicator { width: 0px; height: 0px; }</string></property>
+                          </widget>
+                         </item>
+                        </layout>
+                       </widget>
+                      </item>
+
+                      <!-- DISABLED OVERLAY BANNER -->
+                      <item>
+                       <widget class="QFrame" name="bannerDisabledHttp">
+                        <property name="styleSheet"><string notr="true">background-color: rgba(30, 41, 59, 0.7); border: 1px dashed #475569; border-radius: 8px; padding: 10px 14px;</string></property>
+                        <layout class="QHBoxLayout">
+                         <item><widget class="QLabel"><property name="text"><string>🔒  HTTP check is currently turned off for this server. Click the toggle above to activate and configure.</string></property><property name="styleSheet"><string notr="true">color: #94a3b8; font-size: 12px; font-weight: 500;</string></property></widget></item>
+                        </layout>
+                       </widget>
+                      </item>
+
+                      <!-- CONFIG INPUTS CONTAINER -->
+                      <item>
+                       <widget class="QWidget" name="containerHttp">
+                        <layout class="QVBoxLayout">
+                         <property name="leftMargin"><number>0</number></property>
+                         <property name="rightMargin"><number>0</number></property>
+                         <property name="topMargin"><number>4</number></property>
+                         <property name="bottomMargin"><number>0</number></property>
+                         <property name="spacing"><number>12</number></property>
+                         <item>
+                          <layout class="QHBoxLayout">
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>Target URL / Path:</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QLineEdit" name="txtFormHttpUrl"><property name="placeholderText"><string>e.g. http://{host}/ or /api/health</string></property></widget></item>
+                            </layout>
+                           </item>
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>HTTP Method:</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QComboBox" name="cmbFormHttpMethod"><item><property name="text"><string>GET</string></property></item><item><property name="text"><string>HEAD</string></property></item><item><property name="text"><string>POST</string></property></item></widget></item>
+                            </layout>
+                           </item>
+                          </layout>
+                         </item>
+                         <item>
+                          <layout class="QHBoxLayout">
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>Expected Status Code:</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QSpinBox" name="spnFormHttpStatus"><property name="minimum"><number>100</number></property><property name="maximum"><number>599</number></property><property name="value"><number>200</number></property></widget></item>
+                            </layout>
+                           </item>
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>Request Timeout (sec):</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QDoubleSpinBox" name="spnFormHttpTimeout"><property name="minimum"><double>0.5</double></property><property name="maximum"><double>30.0</double></property><property name="singleStep"><double>0.5</double></property><property name="value"><double>5.0</double></property></widget></item>
+                            </layout>
+                           </item>
+                          </layout>
+                         </item>
+                         <item><widget class="QCheckBox" name="chkFormHttpRedirects"><property name="text"><string>Follow HTTP 3xx Redirects</string></property><property name="checked"><bool>true</bool></property><property name="styleSheet"><string notr="true">color: #e2e8f0;</string></property></widget></item>
+                        </layout>
+                       </widget>
+                      </item>
+                      <item><spacer name="spTabHttp"><property name="orientation"><enum>Qt::Vertical</enum></property></spacer></item>
+                     </layout>
+                    </widget>
+
+                    <!-- TAB 3: HTTPS -->
+                    <widget class="QWidget" name="tabFormHttps">
+                     <attribute name="title"><string>HTTPS / SSL</string></attribute>
+                     <layout class="QVBoxLayout" name="layoutTabHttps">
+                      <property name="spacing"><number>12</number></property>
+                      <property name="leftMargin"><number>16</number></property>
+                      <property name="topMargin"><number>14</number></property>
+                      <property name="rightMargin"><number>16</number></property>
+                      <property name="bottomMargin"><number>14</number></property>
+
+                      <!-- HEADER BAR WITH PILL TOGGLE -->
+                      <item>
+                       <widget class="QFrame" name="headerBarHttps">
+                        <property name="styleSheet"><string notr="true">background-color: #131d33; border: 1px solid #1e293b; border-radius: 8px; padding: 8px 14px;</string></property>
+                        <layout class="QHBoxLayout">
+                         <item>
+                          <layout class="QVBoxLayout">
+                           <property name="spacing"><number>2</number></property>
+                           <item><widget class="QLabel"><property name="text"><string>HTTPS &amp; SSL Certificate Audit</string></property><property name="styleSheet"><string notr="true">font-size: 13px; font-weight: 700; color: #f8fafc;</string></property></widget></item>
+                           <item><widget class="QLabel"><property name="text"><string>Validates TLS handshake, certificate validity, expiration warning, and issuer integrity.</string></property><property name="styleSheet"><string notr="true">font-size: 11px; color: #94a3b8;</string></property></widget></item>
+                          </layout>
+                         </item>
+                         <item><spacer><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+                         <item>
+                          <widget class="QCheckBox" name="chkHttps">
+                           <property name="text"><string>○ DISABLED</string></property>
+                           <property name="cursor"><cursorShape>PointingHandCursor</cursorShape></property>
+                           <property name="styleSheet"><string notr="true">QCheckBox { font-size: 11px; font-weight: 700; color: #64748b; background-color: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 6px 14px; } QCheckBox:hover { color: #94a3b8; background-color: #1e293b; border: 1px solid #475569; } QCheckBox::indicator { width: 0px; height: 0px; }</string></property>
+                          </widget>
+                         </item>
+                        </layout>
+                       </widget>
+                      </item>
+
+                      <!-- DISABLED OVERLAY BANNER -->
+                      <item>
+                       <widget class="QFrame" name="bannerDisabledHttps">
+                        <property name="styleSheet"><string notr="true">background-color: rgba(30, 41, 59, 0.7); border: 1px dashed #475569; border-radius: 8px; padding: 10px 14px;</string></property>
+                        <layout class="QHBoxLayout">
+                         <item><widget class="QLabel"><property name="text"><string>🔒  HTTPS check is currently turned off for this server. Click the toggle above to activate and configure.</string></property><property name="styleSheet"><string notr="true">color: #94a3b8; font-size: 12px; font-weight: 500;</string></property></widget></item>
+                        </layout>
+                       </widget>
+                      </item>
+
+                      <!-- CONFIG INPUTS CONTAINER -->
+                      <item>
+                       <widget class="QWidget" name="containerHttps">
+                        <layout class="QVBoxLayout">
+                         <property name="leftMargin"><number>0</number></property>
+                         <property name="rightMargin"><number>0</number></property>
+                         <property name="topMargin"><number>4</number></property>
+                         <property name="bottomMargin"><number>0</number></property>
+                         <property name="spacing"><number>12</number></property>
+                         <item>
+                          <layout class="QHBoxLayout">
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>HTTPS URL / Path:</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QLineEdit" name="txtFormHttpsUrl"><property name="placeholderText"><string>e.g. https://{host}/ or /api/health</string></property></widget></item>
+                            </layout>
+                           </item>
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>HTTP Method:</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QComboBox" name="cmbFormHttpsMethod"><item><property name="text"><string>GET</string></property></item><item><property name="text"><string>HEAD</string></property></item><item><property name="text"><string>POST</string></property></item></widget></item>
+                            </layout>
+                           </item>
+                          </layout>
+                         </item>
+                         <item>
+                          <layout class="QHBoxLayout">
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>Expected Status Code:</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QSpinBox" name="spnFormHttpsStatus"><property name="minimum"><number>100</number></property><property name="maximum"><number>599</number></property><property name="value"><number>200</number></property></widget></item>
+                            </layout>
+                           </item>
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>Request Timeout (sec):</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QDoubleSpinBox" name="spnFormHttpsTimeout"><property name="minimum"><double>0.5</double></property><property name="maximum"><double>30.0</double></property><property name="singleStep"><double>0.5</double></property><property name="value"><double>5.0</double></property></widget></item>
+                            </layout>
+                           </item>
+                          </layout>
+                         </item>
+                         <item>
+                          <layout class="QHBoxLayout">
+                           <item><widget class="QCheckBox" name="chkFormHttpsVerifySsl"><property name="text"><string>Verify SSL Certificate and Expiry</string></property><property name="checked"><bool>true</bool></property><property name="styleSheet"><string notr="true">color: #e2e8f0;</string></property></widget></item>
+                           <item><widget class="QCheckBox" name="chkFormHttpsRedirects"><property name="text"><string>Follow HTTP 3xx Redirects</string></property><property name="checked"><bool>true</bool></property><property name="styleSheet"><string notr="true">color: #e2e8f0;</string></property></widget></item>
+                          </layout>
+                         </item>
+                        </layout>
+                       </widget>
+                      </item>
+                      <item><spacer name="spTabHttps"><property name="orientation"><enum>Qt::Vertical</enum></property></spacer></item>
+                     </layout>
+                    </widget>
+
+                    <!-- TAB 4: DNS -->
+                    <widget class="QWidget" name="tabFormDns">
+                     <attribute name="title"><string>DNS Integrity</string></attribute>
+                     <layout class="QVBoxLayout" name="layoutTabDns">
+                      <property name="spacing"><number>12</number></property>
+                      <property name="leftMargin"><number>16</number></property>
+                      <property name="topMargin"><number>14</number></property>
+                      <property name="rightMargin"><number>16</number></property>
+                      <property name="bottomMargin"><number>14</number></property>
+
+                      <!-- HEADER BAR WITH PILL TOGGLE -->
+                      <item>
+                       <widget class="QFrame" name="headerBarDns">
+                        <property name="styleSheet"><string notr="true">background-color: #131d33; border: 1px solid #1e293b; border-radius: 8px; padding: 8px 14px;</string></property>
+                        <layout class="QHBoxLayout">
+                         <item>
+                          <layout class="QVBoxLayout">
+                           <property name="spacing"><number>2</number></property>
+                           <item><widget class="QLabel"><property name="text"><string>DNS Resolution Integrity Check</string></property><property name="styleSheet"><string notr="true">font-size: 13px; font-weight: 700; color: #f8fafc;</string></property></widget></item>
+                           <item><widget class="QLabel"><property name="text"><string>Compares local DNS answers against benchmark public resolvers to detect DNS poisoning or CDN divergence.</string></property><property name="styleSheet"><string notr="true">font-size: 11px; color: #94a3b8;</string></property></widget></item>
+                          </layout>
+                         </item>
+                         <item><spacer><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+                         <item>
+                          <widget class="QCheckBox" name="chkDns">
+                           <property name="text"><string>○ DISABLED</string></property>
+                           <property name="cursor"><cursorShape>PointingHandCursor</cursorShape></property>
+                           <property name="styleSheet"><string notr="true">QCheckBox { font-size: 11px; font-weight: 700; color: #64748b; background-color: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 6px 14px; } QCheckBox:hover { color: #94a3b8; background-color: #1e293b; border: 1px solid #475569; } QCheckBox::indicator { width: 0px; height: 0px; }</string></property>
+                          </widget>
+                         </item>
+                        </layout>
+                       </widget>
+                      </item>
+
+                      <!-- DISABLED OVERLAY BANNER -->
+                      <item>
+                       <widget class="QFrame" name="bannerDisabledDns">
+                        <property name="styleSheet"><string notr="true">background-color: rgba(30, 41, 59, 0.7); border: 1px dashed #475569; border-radius: 8px; padding: 10px 14px;</string></property>
+                        <layout class="QHBoxLayout">
+                         <item><widget class="QLabel"><property name="text"><string>🔒  DNS check is currently turned off for this server. Click the toggle above to activate and configure.</string></property><property name="styleSheet"><string notr="true">color: #94a3b8; font-size: 12px; font-weight: 500;</string></property></widget></item>
+                        </layout>
+                       </widget>
+                      </item>
+
+                      <!-- CONFIG INPUTS CONTAINER -->
+                      <item>
+                       <widget class="QWidget" name="containerDns">
+                        <layout class="QVBoxLayout">
+                         <property name="leftMargin"><number>0</number></property>
+                         <property name="rightMargin"><number>0</number></property>
+                         <property name="topMargin"><number>4</number></property>
+                         <property name="bottomMargin"><number>0</number></property>
+                         <property name="spacing"><number>12</number></property>
+                         <item>
+                          <layout class="QHBoxLayout">
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>Query Domain / Hostname:</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QLineEdit" name="txtFormDnsDomain"><property name="placeholderText"><string>e.g. api.example.com (blank = Host Address)</string></property></widget></item>
+                            </layout>
+                           </item>
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>Record Type:</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QComboBox" name="cmbFormDnsRecordType"><item><property name="text"><string>A</string></property></item><item><property name="text"><string>AAAA</string></property></item><item><property name="text"><string>CNAME</string></property></item><item><property name="text"><string>MX</string></property></item><item><property name="text"><string>TXT</string></property></item></widget></item>
+                            </layout>
+                           </item>
+                          </layout>
+                         </item>
+                         <item>
+                          <layout class="QHBoxLayout">
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>Benchmark Resolvers (comma-separated):</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QLineEdit" name="txtFormDnsResolvers"><property name="text"><string>1.1.1.1, 8.8.8.8</string></property><property name="placeholderText"><string>e.g. 1.1.1.1, 8.8.8.8, 9.9.9.9</string></property></widget></item>
+                            </layout>
+                           </item>
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>Query Timeout (sec):</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QDoubleSpinBox" name="spnFormDnsTimeout"><property name="minimum"><double>0.5</double></property><property name="maximum"><double>30.0</double></property><property name="singleStep"><double>0.5</double></property><property name="value"><double>3.0</double></property></widget></item>
+                            </layout>
+                           </item>
+                          </layout>
+                         </item>
+                        </layout>
+                       </widget>
+                      </item>
+                      <item><spacer name="spTabDns"><property name="orientation"><enum>Qt::Vertical</enum></property></spacer></item>
+                     </layout>
+                    </widget>
+
+                    <!-- TAB 5: SNMP -->
+                    <widget class="QWidget" name="tabFormSnmp">
+                     <attribute name="title"><string>SNMP Host</string></attribute>
+                     <layout class="QVBoxLayout" name="layoutTabSnmp">
+                      <property name="spacing"><number>12</number></property>
+                      <property name="leftMargin"><number>16</number></property>
+                      <property name="topMargin"><number>14</number></property>
+                      <property name="rightMargin"><number>16</number></property>
+                      <property name="bottomMargin"><number>14</number></property>
+
+                      <!-- HEADER BAR WITH PILL TOGGLE -->
+                      <item>
+                       <widget class="QFrame" name="headerBarSnmp">
+                        <property name="styleSheet"><string notr="true">background-color: #131d33; border: 1px solid #1e293b; border-radius: 8px; padding: 8px 14px;</string></property>
+                        <layout class="QHBoxLayout">
+                         <item>
+                          <layout class="QVBoxLayout">
+                           <property name="spacing"><number>2</number></property>
+                           <item><widget class="QLabel"><property name="text"><string>SNMP Host Resource Telemetry</string></property><property name="styleSheet"><string notr="true">font-size: 13px; font-weight: 700; color: #f8fafc;</string></property></widget></item>
+                           <item><widget class="QLabel"><property name="text"><string>Polls MIB-II sysUpTime, sysDescr, and Host Resources MIB for CPU, RAM, and disk telemetry.</string></property><property name="styleSheet"><string notr="true">font-size: 11px; color: #94a3b8;</string></property></widget></item>
+                          </layout>
+                         </item>
+                         <item><spacer><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+                         <item>
+                          <widget class="QCheckBox" name="chkSnmp">
+                           <property name="text"><string>○ DISABLED</string></property>
+                           <property name="cursor"><cursorShape>PointingHandCursor</cursorShape></property>
+                           <property name="styleSheet"><string notr="true">QCheckBox { font-size: 11px; font-weight: 700; color: #64748b; background-color: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 6px 14px; } QCheckBox:hover { color: #94a3b8; background-color: #1e293b; border: 1px solid #475569; } QCheckBox::indicator { width: 0px; height: 0px; }</string></property>
+                          </widget>
+                         </item>
+                        </layout>
+                       </widget>
+                      </item>
+
+                      <!-- DISABLED OVERLAY BANNER -->
+                      <item>
+                       <widget class="QFrame" name="bannerDisabledSnmp">
+                        <property name="styleSheet"><string notr="true">background-color: rgba(30, 41, 59, 0.7); border: 1px dashed #475569; border-radius: 8px; padding: 10px 14px;</string></property>
+                        <layout class="QHBoxLayout">
+                         <item><widget class="QLabel"><property name="text"><string>🔒  SNMP check is currently turned off for this server. Click the toggle above to activate and configure.</string></property><property name="styleSheet"><string notr="true">color: #94a3b8; font-size: 12px; font-weight: 500;</string></property></widget></item>
+                        </layout>
+                       </widget>
+                      </item>
+
+                      <!-- CONFIG INPUTS CONTAINER -->
+                      <item>
+                       <widget class="QWidget" name="containerSnmp">
+                        <layout class="QVBoxLayout">
+                         <property name="leftMargin"><number>0</number></property>
+                         <property name="rightMargin"><number>0</number></property>
+                         <property name="topMargin"><number>4</number></property>
+                         <property name="bottomMargin"><number>0</number></property>
+                         <property name="spacing"><number>12</number></property>
+                         <item>
+                          <layout class="QHBoxLayout">
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>SNMP UDP Port:</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QSpinBox" name="spnFormSnmpPort"><property name="minimum"><number>1</number></property><property name="maximum"><number>65535</number></property><property name="value"><number>161</number></property></widget></item>
+                            </layout>
+                           </item>
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>Community String:</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QLineEdit" name="txtFormSnmpCommunity"><property name="text"><string>public</string></property><property name="placeholderText"><string>e.g. public or custom community</string></property></widget></item>
+                            </layout>
+                           </item>
+                          </layout>
+                         </item>
+                         <item>
+                          <layout class="QHBoxLayout">
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>SNMP Version:</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QComboBox" name="cmbFormSnmpVersion"><item><property name="text"><string>2c</string></property></item><item><property name="text"><string>1</string></property></item></widget></item>
+                            </layout>
+                           </item>
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>Poll Timeout (sec):</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QDoubleSpinBox" name="spnFormSnmpTimeout"><property name="minimum"><double>0.5</double></property><property name="maximum"><double>30.0</double></property><property name="singleStep"><double>0.5</double></property><property name="value"><double>3.0</double></property></widget></item>
+                            </layout>
+                           </item>
+                          </layout>
+                         </item>
+                        </layout>
+                       </widget>
+                      </item>
+                      <item><spacer name="spTabSnmp"><property name="orientation"><enum>Qt::Vertical</enum></property></spacer></item>
+                     </layout>
+                    </widget>
+
+                    <!-- TAB 6: TRAFFIC (WIP) -->
+                    <widget class="QWidget" name="tabFormTraffic">
+                     <attribute name="title"><string>Traffic / Wireshark (WIP)</string></attribute>
+                     <layout class="QVBoxLayout" name="layoutTabTraffic">
+                      <property name="spacing"><number>12</number></property>
+                      <property name="leftMargin"><number>16</number></property>
+                      <property name="topMargin"><number>14</number></property>
+                      <property name="rightMargin"><number>16</number></property>
+                      <property name="bottomMargin"><number>14</number></property>
+
+                      <!-- WIP NOTICE BANNER -->
+                      <item>
+                       <widget class="QFrame" name="bannerTrafficWIP">
+                        <property name="styleSheet"><string notr="true">background-color: rgba(245, 158, 11, 0.12); border: 1px solid #b45309; border-radius: 8px; padding: 10px 14px;</string></property>
+                        <layout class="QHBoxLayout">
+                         <item><widget class="QLabel"><property name="text"><string>🚧 Work in Progress (WIP): Wireshark traffic inspection currently captures packets from the local interface of this computer, not remote server interfaces. Remote agent capture will arrive in a future update.</string></property><property name="styleSheet"><string notr="true">color: #fbbf24; font-size: 11px; font-weight: 500;</string></property><property name="wordWrap"><bool>true</bool></property></widget></item>
+                        </layout>
+                       </widget>
+                      </item>
+
+                      <!-- HEADER BAR WITH PILL TOGGLE -->
+                      <item>
+                       <widget class="QFrame" name="headerBarTraffic">
+                        <property name="styleSheet"><string notr="true">background-color: #131d33; border: 1px solid #1e293b; border-radius: 8px; padding: 8px 14px;</string></property>
+                        <layout class="QHBoxLayout">
+                         <item>
+                          <layout class="QVBoxLayout">
+                           <property name="spacing"><number>2</number></property>
+                           <item><widget class="QLabel"><property name="text"><string>Traffic Capture &amp; Anomaly Heuristics</string></property><property name="styleSheet"><string notr="true">font-size: 13px; font-weight: 700; color: #f8fafc;</string></property></widget></item>
+                           <item><widget class="QLabel"><property name="text"><string>Runs local Wireshark / tshark capture to evaluate packets per second, SYN spikes, and port sweep threats.</string></property><property name="styleSheet"><string notr="true">font-size: 11px; color: #94a3b8;</string></property></widget></item>
+                          </layout>
+                         </item>
+                         <item><spacer><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+                         <item>
+                          <widget class="QCheckBox" name="chkTraffic">
+                           <property name="text"><string>○ DISABLED (WIP)</string></property>
+                           <property name="cursor"><cursorShape>PointingHandCursor</cursorShape></property>
+                           <property name="styleSheet"><string notr="true">QCheckBox { font-size: 11px; font-weight: 700; color: #f59e0b; background-color: rgba(245, 158, 11, 0.15); border: 1px solid #b45309; border-radius: 6px; padding: 6px 14px; } QCheckBox:hover { color: #fbbf24; background-color: rgba(245, 158, 11, 0.25); border: 1px solid #f59e0b; } QCheckBox::indicator { width: 0px; height: 0px; }</string></property>
+                          </widget>
+                         </item>
+                        </layout>
+                       </widget>
+                      </item>
+
+                      <!-- DISABLED OVERLAY BANNER -->
+                      <item>
+                       <widget class="QFrame" name="bannerDisabledTraffic">
+                        <property name="styleSheet"><string notr="true">background-color: rgba(30, 41, 59, 0.7); border: 1px dashed #475569; border-radius: 8px; padding: 10px 14px;</string></property>
+                        <layout class="QHBoxLayout">
+                         <item><widget class="QLabel"><property name="text"><string>🔒  Traffic heuristic check is currently disabled. Click the toggle above to activate.</string></property><property name="styleSheet"><string notr="true">color: #94a3b8; font-size: 12px; font-weight: 500;</string></property></widget></item>
+                        </layout>
+                       </widget>
+                      </item>
+
+                      <!-- CONFIG INPUTS CONTAINER -->
+                      <item>
+                       <widget class="QWidget" name="containerTraffic">
+                        <layout class="QVBoxLayout">
+                         <property name="leftMargin"><number>0</number></property>
+                         <property name="rightMargin"><number>0</number></property>
+                         <property name="topMargin"><number>4</number></property>
+                         <property name="bottomMargin"><number>0</number></property>
+                         <property name="spacing"><number>12</number></property>
+                         <item>
+                          <layout class="QHBoxLayout">
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>Capture Interface:</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QLineEdit" name="txtFormTrafficInterface"><property name="text"><string>any</string></property><property name="placeholderText"><string>e.g. any, Ethernet, or adapter name</string></property></widget></item>
+                            </layout>
+                           </item>
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>Capture Duration (sec):</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QDoubleSpinBox" name="spnFormTrafficDuration"><property name="minimum"><double>1.0</double></property><property name="maximum"><double>30.0</double></property><property name="singleStep"><double>0.5</double></property><property name="value"><double>3.0</double></property></widget></item>
+                            </layout>
+                           </item>
+                          </layout>
+                         </item>
+                         <item>
+                          <layout class="QHBoxLayout">
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>SYN Flood Threshold (PPS):</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QDoubleSpinBox" name="spnFormTrafficSynThreshold"><property name="minimum"><double>1.0</double></property><property name="maximum"><double>1000.0</double></property><property name="singleStep"><double>5.0</double></property><property name="value"><double>50.0</double></property></widget></item>
+                            </layout>
+                           </item>
+                           <item>
+                            <layout class="QVBoxLayout">
+                             <item><widget class="QLabel"><property name="text"><string>Port Sweep Threshold (ports):</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                             <item><widget class="QSpinBox" name="spnFormTrafficSweepThreshold"><property name="minimum"><number>2</number></property><property name="maximum"><number>100</number></property><property name="value"><number>10</number></property></widget></item>
+                            </layout>
+                           </item>
+                          </layout>
+                         </item>
+                         <item>
+                          <layout class="QVBoxLayout">
+                           <item><widget class="QLabel"><property name="text"><string>Custom TShark Executable Path (Optional):</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
+                           <item><widget class="QLineEdit" name="txtFormTrafficTsharkPath"><property name="placeholderText"><string>Auto-discovered from PATH / Program Files if left blank</string></property></widget></item>
+                          </layout>
+                         </item>
+                        </layout>
+                       </widget>
+                      </item>
+                      <item><spacer name="spTabTraffic"><property name="orientation"><enum>Qt::Vertical</enum></property></spacer></item>
+                     </layout>
+                    </widget>
+                   </widget>
+                  </item>
+
+                  <!-- 3. ACTION BUTTONS -->
+                  <item>
+                   <layout class="QHBoxLayout">
+                    <property name="topMargin"><number>12</number></property>
+                    <item><widget class="QPushButton" name="btnFormSave"><property name="text"><string>Save Server</string></property></widget></item>
+                    <item><widget class="QPushButton" name="btnFormCancel"><property name="text"><string>Cancel</string></property></widget></item>
+                    <item><spacer name="spFormButtons"><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
+                   </layout>
+                  </item>
                  </layout>
-
-                </item>
-
-                <item>
-
-                 <layout class="QVBoxLayout">
-
-                  <item><widget class="QLabel"><property name="text"><string>TCP Port (1 - 65535):</string></property><property name="styleSheet"><string notr="true">font-weight: 600;</string></property></widget></item>
-
-                  <item><widget class="QSpinBox" name="spnFormPort"><property name="minimum"><number>1</number></property><property name="maximum"><number>65535</number></property><property name="value"><number>80</number></property></widget></item>
-
-                 </layout>
-
-                </item>
-
-               </layout>
-
-              </item>
-
-
-
-              <item><widget class="QLabel" name="lblFormPortHint"><property name="text"><string>Note: For ICMP Ping tests, port numbers are not applicable.</string></property><property name="styleSheet"><string notr="true">color: #64748b; font-size: 11px;</string></property></widget></item>
-
-
-
-              <item>
-
-               <layout class="QHBoxLayout">
-
-                <property name="topMargin"><number>8</number></property>
-
-                <item><widget class="QPushButton" name="btnFormSave"><property name="text"><string>Save Server</string></property></widget></item>
-
-                <item><widget class="QPushButton" name="btnFormCancel"><property name="text"><string>Cancel</string></property></widget></item>
-
-                <item><spacer name="spFormButtons"><property name="orientation"><enum>Qt::Horizontal</enum></property></spacer></item>
-
-               </layout>
-
-              </item>
-
-
-
-             </layout>
-
+                </widget>
+               </item>
+               <item><spacer name="spScrollFormBottom"><property name="orientation"><enum>Qt::Vertical</enum></property></spacer></item>
+              </layout>
+             </widget>
             </widget>
-
            </item>
-
-
-
-           <item><spacer name="spFormBottom"><property name="orientation"><enum>Qt::Vertical</enum></property></spacer></item>
-
           </layout>
-
          </widget>
-
-
 
           <!-- Page 6: System Resource Monitor -->
 
