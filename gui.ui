@@ -46,7 +46,7 @@
 
   <property name="windowTitle">
 
-   <string>Servermon v1.2 - Network Monitor Platform</string>
+   <string>Servermon v1.1 - Network Monitor Platform</string>
 
   </property>
 
@@ -904,7 +904,7 @@ QScrollArea#scrollServerForm > QWidget > QWidget {
 
        <item><widget class="QLabel" name="lblBrandTitle"><property name="text"><string>Server Monitor</string></property></widget></item>
 
-       <item><widget class="QLabel" name="lblBrandSubtitle"><property name="text"><string>Servermon v1.2</string></property></widget></item>
+       <item><widget class="QLabel" name="lblBrandSubtitle"><property name="text"><string>Servermon v1.1</string></property></widget></item>
 
        <item><spacer name="spSidebarTop"><property name="orientation"><enum>Qt::Vertical</enum></property></spacer></item>
 
