@@ -36,6 +36,7 @@ htmlcov/
 .ruff_cache/
 
 # Packaging & Build Outputs
+graphify-out/
 build/
 dist/
 dist-installer/
@@ -76,6 +77,8 @@ config/log_metrics.json
 *.key
 *.pem
 *.pfx
+.gitattributes
+.gitignore
 
 # IDEs & Editor Configurations
 .vscode/
@@ -98,3 +101,4 @@ $RECYCLE.BIN/
 .AppleDouble
 .LSOverride
 ._*
+.gitignore
