@@ -107,6 +107,10 @@ The graphical interface is the main way to interact and use the tool, once you s
   - The resource monitor settings are also here for you to set the refresh rate of it.
   - Finally (for now) The alerting and notification setup lies here: you can set up desktop system tray popups(you should be able to toggle the system tray popups but the toggle has not been added yet however it will be implemented soon), as well as the emailing system setup where you set up the SMTP information and the recipients of who will receive the alerts.
 
+## Uninstalling
+- **Options**
+  -
+
 ## TODO
 
 - [ ] **Traffic Monitoring Check**: Finish the Wireshark / tshark integration to replace the current placeholders with live packet capture, bandwidth tracking, and TCP retransmission stats.
